@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.SysUserMapper">
+
+    <resultMap id="BaseResultMap" type="com.example.demo.model.SysUser">
+        <id     column="user_id"              property="userId"/>
+        <result column="username"             property="username"/>
+        <result column="password_hash"        property="passwordHash"/>
+        <result column="display_name"         property="displayName"/>
+        <result column="role"                 property="role"/>
+        <result column="enabled"              property="enabled"/>
+        <result column="must_change_password" property="mustChangePassword"/>
+        <result column="created_at"           property="createdAt"/>
+        <result column="last_login_at"        property="lastLoginAt"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        user_id, username, password_hash, display_name, role, enabled, must_change_password, created_at, last_login_at
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="userId" keyColumn="user_id">
+        INSERT INTO sys_user (username, password_hash, display_name, role, enabled, must_change_password)
+        VALUES (#{username}, #{passwordHash}, #{displayName}, #{role}, #{enabled}, #{mustChangePassword})
+    </insert>
+
+    <update id="update">
+        UPDATE sys_user
+        SET display_name = #{displayName},
+            role = #{role},
+            enabled = #{enabled}
+        WHERE user_id = #{userId}
+    </update>
+
+    <update id="updatePassword">
+        UPDATE sys_user
+        SET password_hash = #{hash},
+            must_change_password = #{mustChange}
+        WHERE user_id = #{id}
+    </update>
+
+    <update id="touchLogin">
+        UPDATE sys_user SET last_login_at = NOW() WHERE user_id = #{id}
+    </update>
+
+    <select id="findById" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/> FROM sys_user WHERE user_id = #{id}
+    </select>
+
+    <select id="findByUsername" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/> FROM sys_user WHERE username = #{username}
+    </select>
+
+    <select id="findAll" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/> FROM sys_user ORDER BY user_id
+    </select>
+
+    <select id="count" resultType="int">
+        SELECT COUNT(*) FROM sys_user
+    </select>
+
+    <select id="countEnabledByRole" resultType="int">
+        SELECT COUNT(*) FROM sys_user WHERE role = #{role} AND enabled = 1
+    </select>
+
+</mapper>

@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.OrderMapper">
+
+    <resultMap id="BaseResultMap" type="com.example.demo.model.Order">
+        <id     column="order_id"          property="orderId"/>
+        <result column="student_id"        property="studentId"/>
+        <result column="lesson_id"         property="lessonId"/>
+        <result column="total_amount"      property="totalAmount"/>
+        <result column="refunded_amount"   property="refundedAmount"/>
+        <result column="paid_balance"      property="paidBalance"/>
+        <result column="paid_points"       property="paidPoints"/>
+        <result column="earned_points"     property="earnedPoints"/>
+        <result column="refunded_balance"  property="refundedBalance"/>
+        <result column="refunded_points"   property="refundedPoints"/>
+        <result column="clawed_points"     property="clawedPoints"/>
+        <result column="created_at"        property="createdAt"/>
+        <result column="cancel_reason"     property="cancelReason"/>
+        <result column="status"            property="status"/>
+        <result column="payment_status"    property="paymentStatus"/>
+        <result column="item_count"        property="itemCount"/>
+        <result column="active_item_count" property="activeItemCount"/>
+    </resultMap>
+
+    <sql id="Select_With_Counts">
+        SELECT o.order_id, o.student_id, o.lesson_id, o.total_amount, o.refunded_amount, o.status, o.payment_status,
+               o.paid_balance, o.paid_points, o.earned_points, o.refunded_balance, o.refunded_points, o.clawed_points,
+               o.created_at, o.cancel_reason,
+               (SELECT COUNT(*) FROM order_item i WHERE i.order_id = o.order_id)                         AS item_count,
+               (SELECT COUNT(*) FROM order_item i WHERE i.order_id = o.order_id AND i.status = 'ACTIVE') AS active_item_count
+        FROM orders o
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="orderId" keyColumn="order_id">
+        INSERT INTO orders (student_id, lesson_id, total_amount, refunded_amount, status, payment_status)
+        VALUES (#{studentId}, #{lessonId}, #{totalAmount}, 0, #{status}, #{paymentStatus})
+    </insert>
+
+    <delete id="deleteById">
+        DELETE FROM orders WHERE order_id = #{id}
+    </delete>
+
+    <update id="transition">
+        UPDATE orders
+        SET status = #{status},
+            payment_status = #{paymentStatus}
+        WHERE order_id = #{id}
+          AND status = #{fromStatus}
+          AND payment_status = #{fromPaymentStatus}
+    </update>
+
+    <!-- 退课后更新金额:未支付订单减少 total_amount;已支付订单累加退款构成 -->
+    <update id="updateAmounts">
+        UPDATE orders
+        SET total_amount = #{totalAmount},
+            refunded_amount = #{refundedAmount},
+            refunded_balance = #{refundedBalance},
+            refunded_points = #{refundedPoints},
+            clawed_points = #{clawedPoints}
+        WHERE order_id = #{orderId}
+    </update>
+
+    <!-- 支付时记录支付构成 -->
+    <update id="updatePayment">
+        UPDATE orders
+        SET paid_balance = #{paidBalance},
+            paid_points = #{paidPoints},
+            earned_points = #{earnedPoints}
+        WHERE order_id = #{id}
+    </update>
+
+    <select id="findById" resultMap="BaseResultMap">
+        <include refid="Select_With_Counts"/>
+        WHERE o.order_id = #{id}
+    </select>
+
+    <select id="lockById" resultMap="BaseResultMap">
+        SELECT order_id, student_id, lesson_id, total_amount, refunded_amount, status, payment_status,
+               paid_balance, paid_points, earned_points, refunded_balance, refunded_points, clawed_points,
+               created_at, cancel_reason
+        FROM orders
+        WHERE order_id = #{id}
+        FOR UPDATE
+    </select>
+
+    <select id="findAll" resultMap="BaseResultMap">
+        <include refid="Select_With_Counts"/>
+        <where>
+            <if test="studentId != null">
+                o.student_id = #{studentId}
+            </if>
+        </where>
+        ORDER BY o.order_id DESC
+    </select>
+
+    <!-- 下单时间早于 before 且仍是待支付的订单(超时自动取消用) -->
+    <select id="findPendingCreatedBefore" resultType="long">
+        SELECT order_id FROM orders
+        WHERE status = 'PENDING' AND payment_status = 'UNPAID' AND created_at &lt;= #{before}
+        ORDER BY order_id
+    </select>
+
+    <update id="updateCancelReason">
+        UPDATE orders SET cancel_reason = #{reason} WHERE order_id = #{id}
+    </update>
+
+    <select id="countByLesson" resultType="int">
+        SELECT COUNT(*) FROM orders WHERE lesson_id = #{lessonId}
+    </select>
+
+</mapper>

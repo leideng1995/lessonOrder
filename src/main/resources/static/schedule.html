@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>学生课表 · 课程管理</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app"></div>
+<script src="js/common.js"></script>
+<script>
+/* 学生课表:选一个学生,看他报了哪些课、每节课上没上、还剩几节。只读页面 */
+const hm = (v) => fmtTime(fmtDateTime(v).slice(11));
+const VIEWS = [['upcoming', '待上课'], ['all', '全部'], ['cancelled', '已退课']];
+const ST = {
+  upcoming: { text: '待上课', cls: 'warn' },
+  ongoing:  { text: '上课中', cls: 'ok' },
+  done:     { text: '已上',   cls: 'idle' },
+  refunded: { text: '已退课', cls: 'idle' },
+  stopped:  { text: '停课退课', cls: 'bad' },
+};
+
+// 先检查登录和页面权限,通过后再渲染
+requireLogin('schedule').then(() => {
+renderShell({ key: 'schedule', heading: '学生课表', subtitle: '查看一个学生报了哪些课,以及每节课的上课情况' }, `
+  <section class="panel sched-bar">
+    <div class="toolbar">
+      <select id="stu" aria-label="选择学生"><option value="">正在加载学生…</option></select>
+      <div class="seg" id="view" role="group" aria-label="显示范围">
+        ${VIEWS.map(([k, t]) => `<button type="button" class="seg-btn" data-v="${k}">${t}</button>`).join('')}
+      </div>
+      <button class="btn" id="refresh" type="button">${ICON.refresh.replace('<svg', '<svg width="16" height="16"')}刷新</button>
+    </div>
+  </section>
+  <div id="body"></div>`);
+
+const params = new URLSearchParams(location.search);
+const state = { studentId: params.get('studentId') || '', view: 'upcoming', items: [], students: new Map(), seq: 0 };
+
+/* 每节课当前的状态 */
+function statusOf(i, now) {
+  if (i.status === 'CANCELLED') return i.sessionStatus === 'CANCELLED' ? 'stopped' : 'refunded';
+  const s = toDate(i.startAt), e = toDate(i.endAt);
+  return now < s ? 'upcoming' : now < e ? 'ongoing' : 'done';
+}
+
+function dayLabel(d, now) {
+  const a = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const b = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diff = Math.round((a - b) / 86400000);
+  return diff === 0 ? '<span class="tag today">今天</span>' : diff === 1 ? '<span class="tag">明天</span>' : '';
+}
+
+function stat(k, v, h, tone) {
+  return `<div class="stat ${tone || ''}"><div class="k">${k}</div><div class="v">${esc(v)}</div><div class="h">${esc(h || ' ')}</div></div>`;
+}
+
+function render() {
+  const body = $('#body');
+  document.querySelectorAll('.seg-btn').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === state.view)));
+  const s = state.students.get(Number(state.studentId));
+  if (!s) {
+    body.innerHTML = `<section class="panel"><div class="state"><strong>请选择学生</strong>在上方选择一个学生,查看他的课程和课表。</div></section>`;
+    return;
+  }
+  const now = new Date();
+  const items = state.items.map((i) => ({ ...i, st: statusOf(i, now) }));
+  const active = items.filter((i) => i.status === 'ACTIVE');
+  const upcoming = active.filter((i) => i.st === 'upcoming' || i.st === 'ongoing');
+  const done = active.filter((i) => i.st === 'done');
+  const unpaid = active.filter((i) => i.paymentStatus === 'UNPAID');
+  const next = active.find((i) => i.st === 'upcoming' || i.st === 'ongoing');
+
+  // 按课程汇总进度
+  const byLesson = new Map();
+  items.forEach((i) => {
+    if (!byLesson.has(i.lessonId)) byLesson.set(i.lessonId, { title: i.lessonTitle, lessonId: i.lessonId, list: [] });
+    byLesson.get(i.lessonId).list.push(i);
+  });
+  const lessons = [...byLesson.values()].map((g) => {
+    const act = g.list.filter((i) => i.status === 'ACTIVE');
+    return {
+      ...g,
+      total: act.length,
+      done: act.filter((i) => i.st === 'done').length,
+      next: act.find((i) => i.st === 'upcoming' || i.st === 'ongoing'),
+      unpaid: act.filter((i) => i.paymentStatus === 'UNPAID').length,
+      refunded: g.list.length - act.length,
+    };
+  }).sort((a, b) => (b.next ? 1 : 0) - (a.next ? 1 : 0) || b.total - a.total);
+  const studying = lessons.filter((l) => l.next).length;
+
+  const stats = `<section class="stats">
+    ${stat('在读课程', studying, `${lessons.length} LESSONS IN TOTAL`, 'accent')}
+    ${stat('待上课次', upcoming.length, 'UPCOMING SESSIONS', upcoming.length ? 'warn' : '')}
+    ${stat('已上课次', done.length, 'COMPLETED', 'ok')}
+    ${stat('下节课', next ? `${fmtDate(next.startAt).slice(5)} ${hm(next.startAt)}` : '—', next ? next.lessonTitle : 'NO UPCOMING')}
+    ${stat('未支付课次', unpaid.length, unpaid.length ? `${money(unpaid.reduce((n, i) => n + Number(i.price), 0))} 待支付` : 'ALL PAID', unpaid.length ? 'warn' : '')}
+  </section>`;
+
+  const progress = lessons.length === 0 ? '' : `<section class="panel">
+    <div class="panel-head">▍<b>课程进度</b><span>PROGRESS</span></div>
+    <div class="lesson-cards">${lessons.map((l) => {
+      const pct = l.total ? Math.round((l.done / l.total) * 100) : 0;
+      return `<div class="lesson-card${l.next ? '' : ' ended'}">
+        <div class="lc-title">${esc(l.title)}<span class="sub-id">#${l.lessonId}</span></div>
+        <div class="lc-row"><span class="seats"><span class="bar"><i style="width:${pct}%"></i></span><span class="txt">已上 ${l.done} / ${l.total} 节</span></span></div>
+        <div class="lc-meta">${l.next
+          ? `下节 ${fmtDay(l.next.startAt)} <span class="mono">${hm(l.next.startAt)}</span>`
+          : l.total ? '已全部上完' : '没有有效课次'}</div>
+        <div class="lc-tags">
+          ${l.unpaid ? `<span class="badge warn">${l.unpaid} 节未支付</span>` : ''}
+          ${l.refunded ? `<span class="badge idle">退课 ${l.refunded} 节</span>` : ''}
+        </div>
+      </div>`;
+    }).join('')}</div>
+  </section>`;
+
+  const shown = items.filter((i) => (state.view === 'upcoming' ? (i.st === 'upcoming' || i.st === 'ongoing')
+    : state.view === 'cancelled' ? i.status === 'CANCELLED' : true));
+  const byDay = new Map();
+  shown.forEach((i) => {
+    const k = fmtDate(i.startAt);
+    if (!byDay.has(k)) byDay.set(k, []);
+    byDay.get(k).push(i);
+  });
+  const empty = { upcoming: ['没有待上的课', '可以到订单页为该学生下单选课。'], all: ['还没有报过课', '可以到订单页为该学生下单选课。'], cancelled: ['没有退课记录', ''] }[state.view];
+  const timetable = `<section class="panel">
+    <div class="panel-head">▍<b>课表</b><span>TIMETABLE</span><span class="live">${shown.length} 节</span></div>
+    ${shown.length === 0 ? `<div class="state"><strong>${empty[0]}</strong>${empty[1]}</div>` : [...byDay.values()].map((list) => {
+      const d = toDate(list[0].startAt);
+      return `<div class="day">
+        <div class="day-head">${fmtDay(list[0].startAt)} ${dayLabel(d, now)}</div>
+        <div class="day-rows">${list.map((i) => `<div class="day-row ${i.st}">
+          <span class="mono time">${hm(i.startAt)}-${hm(i.endAt)}</span>
+          <span class="title">${esc(i.lessonTitle)}</span>
+          <span class="badges">${badge(ST, i.st)}${i.status === 'ACTIVE' && i.paymentStatus === 'UNPAID' ? '<span class="badge warn">未支付</span>' : ''}</span>
+          <span class="sub-id">订单 #${i.orderId} · ${money(i.price)}</span>
+        </div>`).join('')}</div>
+      </div>`;
+    }).join('')}
+  </section>`;
+
+  body.innerHTML = stats + progress + timetable;
+}
+
+async function loadSchedule() {
+  const my = ++state.seq;
+  state.items = [];
+  if (!state.studentId) return render();
+  $('#body').innerHTML = '<section class="panel"><div class="state"><span class="loader"><i></i>LOADING…</span></div></section>';
+  const t0 = performance.now();
+  try {
+    const items = await getJSON(`/students/${state.studentId}/schedule`);
+    if (my !== state.seq) return;
+    state.items = items;
+    setLink(true, Math.round(performance.now() - t0));
+    render();
+  } catch (e) {
+    if (my !== state.seq) return;
+    setLink(false);
+    $('#body').innerHTML = `<section class="panel"><div class="state"><strong>加载失败</strong>${esc(e.message)}</div></section>`;
+  }
+}
+
+async function init() {
+  if (ME.mustChangePassword) return; // 改完初始密码后页面会自动刷新
+  const sel = $('#stu');
+  try {
+    const list = await getJSON('/students');
+    state.students = new Map(list.map((s) => [s.studentId, s]));
+    sel.innerHTML = '<option value="">选择学生</option>' + list.map((s) =>
+      `<option value="${s.studentId}">${esc(fullName(s))}(#${s.studentId})  余额 ${money(s.balance)}</option>`).join('');
+    if (!state.students.has(Number(state.studentId))) state.studentId = '';
+    sel.value = state.studentId;
+  } catch (e) {
+    setLink(false);
+    sel.innerHTML = '<option value="">学生加载失败</option>';
+    $('#body').innerHTML = `<section class="panel"><div class="state"><strong>加载失败</strong>${esc(e.message)}<br>请确认后端已启动。</div></section>`;
+    return;
+  }
+  loadSchedule();
+}
+
+$('#stu').addEventListener('change', (e) => {
+  state.studentId = e.target.value;
+  history.replaceState(null, '', state.studentId ? `?studentId=${state.studentId}` : location.pathname);
+  loadSchedule();
+});
+$('#view').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-v]');
+  if (!b) return;
+  state.view = b.dataset.v;
+  render();
+});
+$('#refresh').addEventListener('click', init);
+init();
+}, () => { /* 已跳转或已显示错误 */ });
+</script>
+</body>
+</html>

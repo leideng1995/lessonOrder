@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>订单管理 · 课程管理</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app"></div>
+<script src="js/common.js"></script>
+<script>
+const hm = (v) => fmtTime(fmtDateTime(v).slice(11));
+
+/* ---------- 下单:选学生 → 选课程 → 勾选课次 ---------- */
+function openCreateOrder(ctx, reload) {
+  const students = [...ctx.students.values()];
+  const lessons = [...ctx.lessons.values()].filter((l) => l.nextSessionAt); // 只列还有未开始课次的课程
+  let sessions = [], lesson = null, seq = 0, created = null;
+
+  const dlg = openDialog({
+    title: '新增订单',
+    wide: true,
+    body: `
+      <div class="field">
+        <label for="o_student">学生</label>
+        <select id="o_student" required>
+          <option value="">请选择</option>
+          ${students.map((s) => `<option value="${s.studentId}">${esc(fullName(s))}(#${s.studentId})  余额 ${money(s.balance)}</option>`).join('')}
+        </select>
+        ${students.length ? '' : '<span class="help">还没有学生,请先到学生页添加</span>'}
+      </div>
+      <div class="field">
+        <label for="o_lesson">课程</label>
+        <select id="o_lesson" required>
+          <option value="">请选择</option>
+          ${lessons.map((l) => `<option value="${l.lessonId}">${esc(l.title)}  ${money(l.price)}/节  ${fmtDate(l.startDate)} ~ ${fmtDate(l.endDate)}${l.pointsEnabled === false ? '  · 不可用积分' : ''}</option>`).join('')}
+        </select>
+        ${lessons.length ? '' : '<span class="help">没有可报名的课程(课程都已结束,或还没有课程)</span>'}
+      </div>
+      <div class="field">
+        <label>选择课次 <span class="opt">可多选;已满、已停课、已开始、与该学生其他课时间冲突的课次不能选</span></label>
+        <div class="picker" id="o_pick"><p class="note">请先选择课程</p></div>
+      </div>
+      <p class="pick-sum" id="o_sum"></p>`,
+    submit: '下单',
+    success: '已下单,请完成支付',
+    onSubmit: async () => {
+      const studentId = Number(dlg.querySelector('#o_student').value);
+      const ids = [...dlg.querySelectorAll('[data-sid]:checked')].map((c) => Number(c.dataset.sid));
+      if (!lesson) throw new Error('请选择课程');
+      if (ids.length === 0) throw new Error('请至少选择一节课');
+      created = await api('POST', '/orders', { studentId, lessonId: lesson.lessonId, sessionIds: ids });
+    },
+    // 下单成功后立刻弹出支付;关掉支付框订单仍是待支付,可以之后在列表里支付
+    after: () => { reload(); if (created) openPay(created, ctx, reload, true); },
+  });
+
+  const pick = dlg.querySelector('#o_pick');
+  const sum = dlg.querySelector('#o_sum');
+
+  function summary() {
+    const n = dlg.querySelectorAll('[data-sid]:checked').length;
+    const s = ctx.students.get(Number(dlg.querySelector('#o_student').value));
+    if (!lesson || n === 0) { sum.innerHTML = ''; return; }
+    const total = n * Number(lesson.price);
+    const bal = s ? Number(s.balance) || 0 : null;
+    sum.innerHTML = `已选 <b>${n}</b> 节 × ${money(lesson.price)} = <b class="total">${money(total)}</b>`
+      + (bal == null ? '' : bal >= total
+        ? `<span class="ok-note">余额 ${money(bal)},足够支付</span>`
+        : `<span class="warn-note">余额 ${money(bal)} 不足,下单后需先充值才能支付</span>`);
+  }
+
+  /* 学生已占用的时间:该学生所有有效报名(任何课程),用来把冲突的课次置灰 */
+  let booked = [], bookedSeq = 0, bookedReady = false;
+  async function loadBooked() {
+    const my = ++bookedSeq;
+    const sid = dlg.querySelector('#o_student').value;
+    booked = [];
+    bookedReady = !sid;
+    drawPicker();
+    if (!sid) return;
+    try {
+      const list = await getJSON(`/students/${sid}/schedule`);
+      if (my !== bookedSeq) return;
+      booked = list.filter((i) => i.status === 'ACTIVE');
+    } catch (e) {
+      if (my !== bookedSeq) return;
+      booked = [];
+      toast('读取学生课表失败,无法预先排除冲突时间:' + e.message);
+    }
+    bookedReady = true;
+    drawPicker();
+  }
+
+  /* 课次不可选的原因;冲突时返回与哪节课冲突 */
+  function blockOf(s, now) {
+    if (s.status === 'CANCELLED') return { why: '已停课' };
+    if (toDate(s.startAt) <= now) return { why: '已开始' };
+    const start = toDate(s.startAt), end = toDate(s.endAt);
+    const hit = booked.find((b) => toDate(b.startAt) < end && toDate(b.endAt) > start);
+    if (hit) {
+      return hit.sessionId === s.sessionId
+        ? { why: '已报名', tip: `已在订单 #${hit.orderId} 中报名这节课` }
+        : { why: '时间冲突', tip: `与已报的「${hit.lessonTitle}」${hm(hit.startAt)}-${hm(hit.endAt)}(订单 #${hit.orderId})时间重叠` };
+    }
+    if (s.availableSeats <= 0) return { why: '已满' };
+    return null;
+  }
+
+  async function loadSessions() {
+    const my = ++seq;
+    lesson = ctx.lessons.get(Number(dlg.querySelector('#o_lesson').value)) || null;
+    sessions = [];
+    summary();
+    if (!lesson) { pick.innerHTML = '<p class="note">请先选择课程</p>'; return; }
+    pick.innerHTML = '<p class="note">正在加载课次…</p>';
+    try {
+      const list = await getJSON(`/lessons/${lesson.lessonId}/sessions`);
+      if (my !== seq) return;
+      sessions = list;
+    } catch (e) {
+      if (my === seq) pick.innerHTML = `<p class="form-error">${esc(e.message)}</p>`;
+      return;
+    }
+    drawPicker();
+  }
+
+  /* 按日期画出课次;重画时保留仍可选的勾选 */
+  function drawPicker() {
+    if (!lesson || sessions.length === 0) { summary(); return; }
+    const kept = new Set([...pick.querySelectorAll('[data-sid]:checked')].map((c) => c.dataset.sid));
+    const now = new Date();
+    const hasStudent = !!dlg.querySelector('#o_student').value;
+    const byDay = new Map();
+    sessions.forEach((s) => {
+      const k = fmtDate(s.startAt);
+      if (!byDay.has(k)) byDay.set(k, []);
+      byDay.get(k).push(s);
+    });
+    let clash = 0;
+    const days = [...byDay.values()].map((list) => `<div class="pick-day">
+        <span class="pick-date">${fmtDay(list[0].startAt)}</span>
+        <span class="pick-slots">${list.map((s) => {
+          const b = blockOf(s, now);
+          if (b && (b.why === '时间冲突' || b.why === '已报名')) clash++;
+          const on = !b && kept.has(String(s.sessionId));
+          return `<label class="slot${b ? ' off' : ''}${b && b.tip ? ' clash' : ''}"${b && b.tip ? ` title="${esc(b.tip)}"` : ''}>
+            <input type="checkbox" data-sid="${s.sessionId}" ${b ? 'disabled' : ''} ${on ? 'checked' : ''}>
+            <span class="mono">${hm(s.startAt)}-${hm(s.endAt)}</span>
+            <small>${b ? b.why : '余 ' + s.availableSeats}</small>
+          </label>`;
+        }).join('')}</span>
+      </div>`).join('');
+    const hint = !hasStudent ? '<span class="pick-hint">先选择学生,会自动排除该学生其他课程已占用的时间</span>'
+      : !bookedReady ? '<span class="pick-hint">正在读取学生课表…</span>'
+      : clash ? `<span class="pick-hint warn">${clash} 节与该学生已报的课时间冲突或已报名,已置灰(鼠标悬停查看原因)</span>` : '';
+    pick.innerHTML = `<div class="pick-tools">
+        <button type="button" class="btn sm" data-all>全选可选课次</button>
+        <button type="button" class="btn sm" data-none>清空</button>
+        ${hint}
+      </div>` + days;
+    summary();
+  }
+
+  dlg.querySelector('#o_lesson').addEventListener('change', loadSessions);
+  dlg.querySelector('#o_student').addEventListener('change', loadBooked);
+  pick.addEventListener('change', summary);
+  pick.addEventListener('click', (e) => {
+    if (e.target.closest('[data-all]')) pick.querySelectorAll('[data-sid]:not(:disabled)').forEach((c) => { c.checked = true; });
+    else if (e.target.closest('[data-none]')) pick.querySelectorAll('[data-sid]').forEach((c) => { c.checked = false; });
+    else return;
+    summary();
+  });
+}
+
+/* ---------- 支付:余额 + 积分组合支付(100 积分 = 1 元,余额实付 × 2 获得积分) ---------- */
+async function openPay(row, ctx, reload, justCreated) {
+  let s;
+  try {
+    s = await getJSON(`/students/${row.studentId}`); // 取最新的余额和积分
+  } catch (e) {
+    toast(e.message);
+    return;
+  }
+  // 全部用"分"计算,1 积分 = 1 分,没有小数误差
+  const totalCents = Math.round(Number(row.totalAmount) * 100);
+  const balCents = Math.round(Number(s.balance) * 100);
+  const lesson = ctx.lessons && ctx.lessons.get(row.lessonId);
+  const allowPts = !lesson || lesson.pointsEnabled !== false; // 课程不支持积分时只能用余额
+  const maxPts = allowPts ? Math.min(s.points || 0, totalCents) : 0;
+  const yuan = (c) => money(c / 100);
+
+  const dlg = openDialog({
+    title: `支付订单 #${row.orderId}`,
+    body: `
+      <dl class="kv">
+        <div><dt>学生</dt><dd>${esc(fullName(s))}<span class="sub-id">#${s.studentId}</span></dd></div>
+        <div><dt>订单金额</dt><dd class="mono">${yuan(totalCents)}<span class="sub-id">${row.activeItemCount} 节</span></dd></div>
+        <div><dt>当前余额</dt><dd class="mono">${yuan(balCents)}</dd></div>
+        <div><dt>当前积分</dt><dd class="mono">${pts(s.points)}<span class="sub-id">可抵 ${yuan(s.points || 0)}</span></dd></div>
+      </dl>
+      <div class="field">
+        <label for="pay_pts">使用积分<span class="opt">(100 积分抵 1 元,最多 ${pts(maxPts)})</span></label>
+        <div class="pay-pts">
+          <input id="pay_pts" type="number" min="0" max="${maxPts}" step="1" value="0" ${maxPts ? '' : 'disabled'}>
+          <button type="button" class="btn sm" data-pts="0">不用积分</button>
+          <button type="button" class="btn sm" data-pts="${maxPts}" ${maxPts ? '' : 'disabled'}>最多抵扣</button>
+        </div>
+        ${!allowPts ? '<span class="help warn-note">该课程不支持积分抵扣,只能用余额支付(余额支付仍可获得积分)</span>' : maxPts ? '' : '<span class="help">该学生暂无积分</span>'}
+      </div>
+      <div class="pay-sum" id="pay_sum"></div>
+      ${row.payDeadline ? `<p class="note pay-later">请在 <b>${fmtDateTime(row.payDeadline).slice(11, 16)}</b> 前支付(还剩 ${minutesLeft(row.payDeadline)} 分钟),超时订单会自动取消并归还名额。${justCreated ? '暂不支付可以点「返回」,之后在列表里点「支付」。' : ''}</p>` : ''}`,
+    submit: '确认支付',
+    onSubmit: async () => {
+      const p = read();
+      if (p === null) throw new Error(`使用的积分需为 0 ~ ${maxPts} 的整数`);
+      const o = await api('PUT', `/orders/${row.orderId}/pay`, { points: p });
+      toast(`支付成功${o.paidPoints ? `,积分抵扣 ${money(o.paidPoints / 100)}` : ''}${o.earnedPoints ? `,获得 ${pts(o.earnedPoints)} 积分` : ''}`);
+    },
+    after: reload,
+  });
+
+  const input = dlg.querySelector('#pay_pts');
+  const sum = dlg.querySelector('#pay_sum');
+  function read() {
+    const v = input.value.trim();
+    if (!/^\d+$/.test(v || '0')) return null;
+    const n = Number(v || 0);
+    return n <= maxPts ? n : null;
+  }
+  function update() {
+    const p = read();
+    if (p === null) {
+      sum.innerHTML = `<p class="form-error">使用的积分需为 0 ~ ${pts(maxPts)} 的整数</p>`;
+      return;
+    }
+    const balPart = totalCents - p;             // 余额需支付(分)
+    const earn = Math.floor(balPart * 2 / 100);  // 余额实付每 1 元得 2 积分
+    const enough = balCents >= balPart;
+    sum.innerHTML = `
+      <div class="pay-row"><span>积分抵扣</span><b class="mono">-${yuan(p)}</b><small>${pts(p)} 积分</small></div>
+      <div class="pay-row"><span>余额支付</span><b class="mono total">${yuan(balPart)}</b>
+        <small>${enough ? `支付后余额 ${yuan(balCents - balPart)}` : `<span class="warn-note">余额不足,还差 ${yuan(balPart - balCents)}</span>`}</small></div>
+      <div class="pay-row"><span>本单获得积分</span><b class="mono pts">+${pts(earn)}</b><small>支付后积分 ${pts((s.points || 0) - p + earn)}</small></div>`;
+  }
+  input.addEventListener('input', update);
+  dlg.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-pts]');
+    if (!b) return;
+    input.value = b.dataset.pts;
+    update();
+  });
+  update();
+}
+
+/* ---------- 订单明细:每节课的状态,可单独退一节 ---------- */
+async function showDetail(row, ctx, reload) {
+  let o;
+  try {
+    o = await getJSON(`/orders/${row.orderId}`);
+  } catch (e) {
+    toast(e.message);
+    return;
+  }
+  const s = ctx.students.get(o.studentId), l = ctx.lessons.get(o.lessonId);
+  const now = new Date();
+  const paid = o.paymentStatus === 'PAID';
+  const refundable = (i) => i.status === 'ACTIVE' && o.status !== 'CANCELLED' && toDate(i.startAt) > now;
+  const dlg = openDialog({
+    title: `订单 #${o.orderId} 明细`,
+    wide: true,
+    body: `
+      <dl class="kv">
+        <div><dt>学生</dt><dd>${esc(s ? fullName(s) : '未知学生')}<span class="sub-id">#${o.studentId}</span></dd></div>
+        <div><dt>课程</dt><dd>${esc(l ? l.title : '未知课程')}<span class="sub-id">#${o.lessonId}</span></dd></div>
+        <div><dt>订单金额</dt><dd class="mono">${money(o.totalAmount)}</dd></div>
+        <div><dt>状态</dt><dd>${badge(ORDER_STATUS, o.status)} ${badge(PAY_STATUS, o.paymentStatus)}</dd></div>
+        <div><dt>下单时间</dt><dd class="mono">${fmtDateTime(o.createdAt)}${o.payDeadline
+          ? `<br><small>支付截止 ${fmtDateTime(o.payDeadline).slice(11, 16)}</small>` : ''}</dd></div>
+        ${o.cancelReason ? `<div><dt>取消原因</dt><dd>${esc(o.cancelReason)}</dd></div>` : ''}
+        ${o.paymentStatus === 'UNPAID' ? '' : `
+        <div><dt>支付方式</dt><dd class="mono">余额 ${money(o.paidBalance)}${o.paidPoints ? `<br>积分 ${pts(o.paidPoints)}(抵 ${money(o.paidPoints / 100)})` : ''}</dd></div>
+        <div><dt>获得积分</dt><dd class="mono pts">+${pts(o.earnedPoints)}</dd></div>
+        <div><dt>已退款</dt><dd class="mono">${money(o.refundedAmount)}${Number(o.refundedAmount) > 0
+          ? `<br><small>余额 ${money(o.refundedBalance)} · 积分 ${pts(o.refundedPoints)}</small>` : ''}</dd></div>
+        ${o.clawedPoints ? `<div><dt>扣回积分</dt><dd class="mono minus">-${pts(o.clawedPoints)}</dd></div>` : ''}`}
+      </dl>
+      <div class="table-wrap dlg-table"><table>
+        <thead><tr><th>上课时间</th><th class="num">单价</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody>${o.items.map((i) => `<tr class="${i.status === 'CANCELLED' ? 'muted' : ''}">
+          <td>${fmtDay(i.startAt)} <span class="mono">${hm(i.startAt)}-${hm(i.endAt)}</span></td>
+          <td class="num">${money(i.price)}</td>
+          <td>${i.status === 'CANCELLED' && i.sessionStatus === 'CANCELLED'
+            ? '<span class="badge bad">停课退课</span>' : badge(ITEM_STATUS, i.status)}</td>
+          <td>${refundable(i) ? `<button type="button" class="act danger" data-item="${i.itemId}">退这节课</button>` : ''}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>`,
+  });
+  dlg.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-item]');
+    if (!b) return;
+    const i = o.items.find((x) => String(x.itemId) === b.dataset.item);
+    openDialog({
+      title: '退课',
+      body: `<p>确定退掉 ${esc(fmtSpan(i.startAt, i.endAt))} 这节课吗?</p>
+        <p class="note">${paid
+          ? `${money(i.price)} 按原支付方式退回${o.paidPoints ? '(余额和积分按比例)' : '学生余额'},并扣回这部分对应的已得积分。`
+          : `订单金额将减少 ${money(i.price)}。`}课次名额会归还。</p>`,
+      submit: '退课',
+      danger: true,
+      success: paid ? `已退课,${money(i.price)} 已按原支付方式退回` : '已退课',
+      onSubmit: () => api('PUT', `/orders/${o.orderId}/items/${i.itemId}/cancel`),
+      after: () => { dlg.close(); reload(); showDetail(row, ctx, reload); },
+    });
+  });
+}
+
+initListPage({
+  key: 'orders',
+  entity: '订单',
+  title: '订单列表',
+  subtitle: '为学生选课下单、支付、退课和取消订单',
+  search: '搜索订单号、学生姓名、课程标题',
+  empty: '还没有订单',
+  emptyHint: '点击「新增订单」为学生选择课程和课次。',
+  endpoint: '/orders',
+  idOf: (r) => r.orderId,
+  rowName: (r, ctx) => {
+    const s = ctx.students.get(r.studentId), l = ctx.lessons.get(r.lessonId);
+    return `#${r.orderId} ${s ? fullName(s) : ''} ${l ? l.title : ''}`.trim();
+  },
+  // 订单没有修改接口:支付、退课和取消通过专用操作完成,已取消的订单才能删除
+  can: { create: true, update: false, remove: true },
+  canRemove: (r) => r.status === 'CANCELLED',
+  removeNote: '只有已取消的订单可以删除。',
+  onCreate: openCreateOrder,
+  actions: [
+    { label: '支付', show: (r) => r.status === 'PENDING', open: openPay },
+    { label: '明细', open: showDetail },
+    {
+      label: '取消订单',
+      danger: true,
+      show: (r) => r.status !== 'CANCELLED',
+      confirm: (r) => (r.paymentStatus === 'PAID'
+        ? `确定取消订单 #${r.orderId} 吗?所有尚未开始的课次都会退掉,按原支付方式退回${r.paidPoints ? '余额和积分' : '学生余额'},并扣回对应的已得积分;已开始的课次保留、不退款。`
+        : `确定取消订单 #${r.orderId} 吗?所有尚未开始的课次都会退掉,名额归还。`),
+      run: (r) => api('PUT', `/orders/${r.orderId}/cancel`),
+      success: (r) => (r.paymentStatus === 'PAID' ? '订单已取消,未上的课已按原支付方式退款' : '订单已取消'),
+    },
+  ],
+  filter: {
+    all: '全部订单状态',
+    options: () => Object.entries(ORDER_STATUS).map(([k, v]) => [k, v.text]),
+    match: (r, v) => r.status === v,
+  },
+  // 相关信息合并成两行显示,列少一些,一屏放得下
+  columns: [
+    { title: '订单号', cls: 'id', cell: (r) => r.orderId },
+    {
+      title: '学生 / 课程',
+      cell: (r, ctx) => {
+        const s = ctx.students.get(r.studentId), l = ctx.lessons.get(r.lessonId);
+        return `<span class="cell-main">${esc(s ? fullName(s) : '未知学生')}<span class="sub-id">#${r.studentId}</span></span>`
+          + `<span class="cell-sub">${esc(l ? l.title : '未知课程')}</span>`;
+      },
+    },
+    { title: '课次', cls: 'num', cell: (r) => (r.activeItemCount === r.itemCount ? `${r.itemCount} 节` : `${r.activeItemCount} / ${r.itemCount} 节`) },
+    {
+      title: '金额',
+      cls: 'num',
+      cell: (r) => {
+        const sub = [
+          r.paidPoints ? `积分抵 ${money(r.paidPoints / 100)}` : '',
+          Number(r.refundedAmount) > 0 ? `已退 ${money(r.refundedAmount)}` : '',
+          r.earnedPoints ? `<span class="pts">+${pts(r.earnedPoints - r.clawedPoints)} 积分</span>` : '',
+        ].filter(Boolean);
+        return `<span class="cell-main">${money(r.totalAmount)}</span>`
+          + (sub.length ? `<span class="cell-sub">${sub.join('<span class="sep">·</span>')}</span>` : '');
+      },
+    },
+    {
+      title: '状态',
+      cell: (r) => {
+        // 待支付显示剩余支付时间;超时自动取消的显示原因
+        const left = r.payDeadline ? minutesLeft(r.payDeadline) : null;
+        const extra = left !== null
+          ? `<span class="cell-sub ${left <= 5 ? 'minus' : ''}">${left > 0 ? `剩 ${left} 分钟支付` : '已超时,即将自动取消'}</span>`
+          : r.cancelReason ? `<span class="cell-sub" title="${esc(r.cancelReason)}">超时自动取消</span>` : '';
+        return `<span class="badge-stack">${badge(ORDER_STATUS, r.status)}${badge(PAY_STATUS, r.paymentStatus)}</span>${extra}`;
+      },
+    },
+  ],
+  text: (r, ctx) => {
+    const s = ctx.students.get(r.studentId), l = ctx.lessons.get(r.lessonId);
+    return [r.orderId, s ? fullName(s) : '', l ? l.title : ''].join(' ');
+  },
+  stats: (rows) => {
+    const charged = rows.filter((r) => r.paymentStatus === 'PAID' || r.paymentStatus === 'REFUNDED');
+    // 实收只算余额部分(积分抵扣不是现金收入),扣除已退回的余额
+    const net = charged.reduce((n, r) => n + (Number(r.paidBalance) || 0) - (Number(r.refundedBalance) || 0), 0);
+    const ptsUsed = charged.reduce((n, r) => n + (r.paidPoints || 0) - (r.refundedPoints || 0), 0);
+    const pending = rows.filter((r) => r.status === 'PENDING').length;
+    return [
+      { label: '订单总数', value: rows.length, hint: 'TOTAL ORDERS', tone: 'accent' },
+      { label: '待支付', value: pending, hint: 'AWAITING PAYMENT', tone: pending ? 'warn' : '' },
+      { label: '已支付', value: rows.filter((r) => r.paymentStatus === 'PAID').length, hint: 'PAID ORDERS', tone: 'ok' },
+      { label: '余额实收', value: money(net), hint: ptsUsed ? `另积分抵扣 ${money(ptsUsed / 100)}` : 'NET OF REFUNDS (CNY)' },
+    ];
+  },
+  // 订单需要学生姓名和课程标题,三个接口一起请求
+  load: async () => {
+    const [rows, students, lessons] = await Promise.all([
+      getJSON('/orders'), getJSON('/students'), getJSON('/lessons'),
+    ]);
+    return {
+      rows,
+      ctx: {
+        students: new Map(students.map((s) => [s.studentId, s])),
+        lessons: new Map(lessons.map((l) => [l.lessonId, l])),
+      },
+    };
+  },
+});
+</script>
+</body>
+</html>

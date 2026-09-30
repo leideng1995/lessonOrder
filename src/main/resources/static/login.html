@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · 课程管理</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body class="login-page">
+<main class="login-wrap">
+  <section class="login-card" aria-labelledby="login-title">
+    <div class="login-brand">
+      <span class="logo" id="login-logo"></span>
+      <div>
+        <h1 id="login-title">课程管理</h1>
+        <small>EDU·CONSOLE</small>
+      </div>
+    </div>
+    <p class="login-sub">请使用管理员分配的账号登录</p>
+    <p class="login-notice" id="login-notice" role="alert" hidden></p>
+    <form id="login-form" novalidate>
+      <div class="field">
+        <label for="username">用户名</label>
+        <input id="username" name="username" autocomplete="username" required autofocus maxlength="32" spellcheck="false">
+      </div>
+      <div class="field">
+        <label for="password">密码</label>
+        <div class="pw-wrap">
+          <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="64">
+          <button type="button" class="pw-toggle" id="pw-toggle" aria-label="显示密码" aria-pressed="false">显示</button>
+        </div>
+      </div>
+      <p class="form-error" id="login-error" role="alert" hidden></p>
+      <button type="submit" class="btn primary login-btn" id="login-btn">登录</button>
+    </form>
+    <p class="login-foot">忘记密码请联系管理员重置
+      <button type="button" class="link-btn" id="reset-admin" hidden>重置管理员密码</button>
+    </p>
+  </section>
+</main>
+<script src="js/common.js"></script>
+<script>
+$('#login-logo').innerHTML = ICON.logo;
+
+/* 只接受本站内的相对路径作为登录后的跳转地址,防止被利用跳到外部网站 */
+function target(me) {
+  const next = new URLSearchParams(location.search).get('next') || '';
+  const page = next.replace(/^\//, '').split(/[?#]/)[0].replace(/\.html$/, '');
+  if (next.startsWith('/') && !next.startsWith('//') && me.menus.includes(page)) return next;
+  return me.menus.length ? `/${me.menus[0]}.html` : '/login.html';
+}
+
+// 已经登录则直接进入;接口不通(没启动后端,或不是通过 Spring Boot 地址打开的页面)时给出提示
+function notice(html) { const n = $('#login-notice'); n.innerHTML = html; n.hidden = false; }
+const HINT = '请启动后端,并通过 Spring Boot 的地址打开本页,例如 <a href="http://localhost:8082/login.html">http://localhost:8082/login.html</a>';
+if (location.protocol === 'file:') {
+  notice('当前是直接打开的本地文件,无法登录。' + HINT);
+} else {
+  fetch('/api/auth/me').then((r) => {
+    if (r.ok) return r.json().then((me) => location.replace(target(me)));
+    if (r.status !== 401) notice('无法连接到登录接口(' + r.status + ')。' + HINT);
+  }, () => notice('无法连接到服务器。' + HINT));
+}
+
+/* 「重置管理员密码」:后端开启时才显示(配置 app.security.admin-reset-enabled) */
+fetch('/api/auth/options').then((r) => (r.ok ? r.json() : null)).then((o) => {
+  if (o && o.adminResetEnabled) $('#reset-admin').hidden = false;
+}, () => {});
+$('#reset-admin').addEventListener('click', () => {
+  openDialog({
+    title: '重置管理员密码',
+    body: `<p>将 <b>admin</b> 账号的密码重置为 <b class="mono">123456</b>,并解除锁定。</p>
+      <p class="note">重置后用 admin / 123456 登录,系统会要求立即设置新密码(8~64 位,含字母和数字)。</p>`,
+    submit: '重置',
+    danger: true,
+    onSubmit: () => api('POST', '/auth/reset-admin'),
+    after: () => {
+      $('#username').value = 'admin';
+      $('#password').value = '';
+      $('#password').focus();
+      err.hidden = true;
+      notice('admin 的密码已重置为 123456,请登录后立即修改。');
+      $('#login-notice').classList.add('ok');
+    },
+  });
+});
+
+const form = $('#login-form'), err = $('#login-error'), btn = $('#login-btn');
+$('#pw-toggle').addEventListener('click', (e) => {
+  const pw = $('#password'), show = pw.type === 'password';
+  pw.type = show ? 'text' : 'password';
+  e.currentTarget.textContent = show ? '隐藏' : '显示';
+  e.currentTarget.setAttribute('aria-pressed', String(show));
+  e.currentTarget.setAttribute('aria-label', show ? '隐藏密码' : '显示密码');
+});
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const username = $('#username').value.trim(), password = $('#password').value;
+  if (!username || !password) {
+    err.textContent = '请输入用户名和密码';
+    err.hidden = false;
+    (username ? $('#password') : $('#username')).focus();
+    return;
+  }
+  err.hidden = true;
+  btn.disabled = true;
+  btn.textContent = '登录中…';
+  try {
+    const me = await api('POST', '/auth/login', { username, password });
+    location.replace(target(me));
+  } catch (ex) {
+    err.textContent = ex.message;
+    err.hidden = false;
+    btn.disabled = false;
+    btn.textContent = '登录';
+    $('#password').select();
+  }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.LessonSessionMapper">
+
+    <resultMap id="BaseResultMap" type="com.example.demo.model.LessonSession">
+        <id     column="session_id"      property="sessionId"/>
+        <result column="lesson_id"       property="lessonId"/>
+        <result column="period_id"       property="periodId"/>
+        <result column="start_at"        property="startAt"/>
+        <result column="end_at"          property="endAt"/>
+        <result column="capacity"        property="capacity"/>
+        <result column="available_seats" property="availableSeats"/>
+        <result column="status"          property="status"/>
+        <result column="booked_count"    property="bookedCount"/>
+        <result column="item_count"      property="itemCount"/>
+    </resultMap>
+
+    <sql id="Select_With_Counts">
+        SELECT s.session_id, s.lesson_id, s.period_id, s.start_at, s.end_at, s.capacity, s.available_seats, s.status,
+               (SELECT COUNT(*) FROM order_item i WHERE i.session_id = s.session_id AND i.status = 'ACTIVE') AS booked_count,
+               (SELECT COUNT(*) FROM order_item i WHERE i.session_id = s.session_id)                         AS item_count
+        FROM lesson_session s
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="sessionId" keyColumn="session_id">
+        INSERT INTO lesson_session (lesson_id, period_id, start_at, end_at, capacity, available_seats, status)
+        VALUES (#{lessonId}, #{periodId}, #{startAt}, #{endAt}, #{capacity}, #{availableSeats}, #{status})
+    </insert>
+
+    <delete id="deleteById">
+        DELETE FROM lesson_session WHERE session_id = #{id}
+    </delete>
+
+    <update id="update">
+        UPDATE lesson_session
+        SET period_id = #{periodId},
+            start_at = #{startAt},
+            end_at = #{endAt},
+            capacity = #{capacity},
+            available_seats = #{availableSeats},
+            status = #{status}
+        WHERE session_id = #{sessionId}
+    </update>
+
+    <select id="findById" resultMap="BaseResultMap">
+        <include refid="Select_With_Counts"/>
+        WHERE s.session_id = #{id}
+    </select>
+
+    <select id="findByLesson" resultMap="BaseResultMap">
+        <include refid="Select_With_Counts"/>
+        WHERE s.lesson_id = #{lessonId}
+        ORDER BY s.start_at
+    </select>
+
+    <select id="lockByIds" resultMap="BaseResultMap">
+        SELECT session_id, lesson_id, period_id, start_at, end_at, capacity, available_seats, status
+        FROM lesson_session
+        WHERE session_id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+        ORDER BY session_id
+        FOR UPDATE
+    </select>
+
+    <update id="decreaseSeat">
+        UPDATE lesson_session
+        SET available_seats = available_seats - 1
+        WHERE session_id = #{id} AND status = 'SCHEDULED' AND available_seats &gt; 0
+    </update>
+
+    <update id="increaseSeat">
+        UPDATE lesson_session
+        SET available_seats = available_seats + 1
+        WHERE session_id = #{id} AND available_seats &lt; capacity
+    </update>
+
+    <update id="updateStatus">
+        UPDATE lesson_session SET status = #{status} WHERE session_id = #{id}
+    </update>
+
+</mapper>

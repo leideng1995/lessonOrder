@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.StudentMapper">
+
+    <resultMap id="BaseResultMap" type="com.example.demo.model.Student">
+        <id     column="student_id"        property="studentId"/>
+        <result column="first_name"        property="firstName"/>
+        <result column="last_name"         property="lastName"/>
+        <result column="email"             property="email"/>
+        <result column="password"          property="password"/>
+        <result column="phone"             property="phone"/>
+        <result column="date_of_birth"     property="dateOfBirth"/>
+        <result column="balance"           property="balance"/>
+        <result column="points"            property="points"/>
+        <result column="registration_date" property="registrationDate"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        student_id, first_name, last_name, email, password, phone, date_of_birth, balance, points, registration_date
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="studentId" keyColumn="student_id">
+        INSERT INTO student (first_name, last_name, email, password, phone, date_of_birth, balance)
+        VALUES (#{firstName}, #{lastName}, #{email}, #{password}, #{phone}, #{dateOfBirth}, COALESCE(#{balance}, 0))
+    </insert>
+
+    <delete id="deleteById">
+        DELETE FROM student WHERE student_id = #{id}
+    </delete>
+
+    <update id="update">
+        UPDATE student
+        <set>
+            first_name = #{firstName},
+            last_name = #{lastName},
+            email = #{email},
+            phone = #{phone},
+            date_of_birth = #{dateOfBirth},
+            <if test="password != null and password != ''">
+                password = #{password},
+            </if>
+        </set>
+        WHERE student_id = #{studentId}
+    </update>
+
+    <select id="findById" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM student
+        WHERE student_id = #{id}
+    </select>
+
+    <select id="lockById" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM student
+        WHERE student_id = #{id}
+        FOR UPDATE
+    </select>
+
+    <select id="findAll" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM student
+        ORDER BY student_id DESC
+    </select>
+
+    <update id="addPoints">
+        UPDATE student SET points = points + #{n} WHERE student_id = #{id}
+    </update>
+
+    <update id="deductPoints">
+        UPDATE student SET points = points - #{n} WHERE student_id = #{id} AND points &gt;= #{n}
+    </update>
+
+    <update id="updatePasswordHash">
+        UPDATE student SET password = #{hash} WHERE student_id = #{id}
+    </update>
+
+    <update id="addBalance">
+        UPDATE student
+        SET balance = balance + #{amount}
+        WHERE student_id = #{id}
+    </update>
+
+    <update id="deductBalance">
+        UPDATE student
+        SET balance = balance - #{amount}
+        WHERE student_id = #{id} AND balance &gt;= #{amount}
+    </update>
+
+</mapper>

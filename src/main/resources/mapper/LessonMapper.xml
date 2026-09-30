@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.LessonMapper">
+
+    <resultMap id="BaseResultMap" type="com.example.demo.model.Lesson">
+        <id     column="lesson_id"       property="lessonId"/>
+        <result column="title"           property="title"/>
+        <result column="description"     property="description"/>
+        <result column="price"           property="price"/>
+        <result column="category"        property="category"/>
+        <result column="start_date"      property="startDate"/>
+        <result column="end_date"        property="endDate"/>
+        <result column="capacity"        property="capacity"/>
+        <result column="points_enabled"  property="pointsEnabled"/>
+        <result column="session_count"   property="sessionCount"/>
+        <result column="seat_total"      property="seatTotal"/>
+        <result column="booked_count"    property="bookedCount"/>
+        <result column="next_session_at" property="nextSessionAt"/>
+    </resultMap>
+
+    <!-- 课程 + 课次统计:只统计正常排课(未停课)的课次 -->
+    <sql id="Select_With_Stats">
+        SELECT l.lesson_id, l.title, l.description, l.price, l.category, l.start_date, l.end_date, l.capacity, l.points_enabled,
+               COALESCE(st.session_count, 0) AS session_count,
+               COALESCE(st.seat_total, 0)    AS seat_total,
+               COALESCE(st.booked_count, 0)  AS booked_count,
+               st.next_session_at
+        FROM lesson l
+        LEFT JOIN (
+            SELECT lesson_id,
+                   COUNT(*)                                   AS session_count,
+                   SUM(capacity)                              AS seat_total,
+                   SUM(capacity - available_seats)            AS booked_count,
+                   MIN(IF(start_at &gt; NOW(), start_at, NULL)) AS next_session_at
+            FROM lesson_session
+            WHERE status = 'SCHEDULED'
+            GROUP BY lesson_id
+        ) st ON st.lesson_id = l.lesson_id
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="lessonId" keyColumn="lesson_id">
+        INSERT INTO lesson (title, description, price, category, start_date, end_date, capacity, points_enabled)
+        VALUES (#{title}, #{description}, #{price}, #{category}, #{startDate}, #{endDate}, #{capacity}, #{pointsEnabled})
+    </insert>
+
+    <delete id="deleteById">
+        DELETE FROM lesson WHERE lesson_id = #{id}
+    </delete>
+
+    <update id="update">
+        UPDATE lesson
+        SET title = #{title},
+            description = #{description},
+            price = #{price},
+            category = #{category},
+            start_date = #{startDate},
+            end_date = #{endDate},
+            capacity = #{capacity},
+            points_enabled = #{pointsEnabled}
+        WHERE lesson_id = #{lessonId}
+    </update>
+
+    <select id="findById" resultMap="BaseResultMap">
+        <include refid="Select_With_Stats"/>
+        WHERE l.lesson_id = #{id}
+    </select>
+
+    <select id="findAll" resultMap="BaseResultMap">
+        <include refid="Select_With_Stats"/>
+        <where>
+            <if test="category != null and category != ''">
+                l.category = #{category}
+            </if>
+        </where>
+        ORDER BY l.lesson_id DESC
+    </select>
+
+</mapper>

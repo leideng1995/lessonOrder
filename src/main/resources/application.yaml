@@ -1,0 +1,35 @@
+spring:
+  application:
+    name: demo
+  datasource:
+    url: jdbc:mysql://localhost:3306/test?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8
+    username: root
+    password: rootpass
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  web:
+    error:
+      include-message: always   # 把业务错误说明(如"余额不足")返回给前端;Spring Boot 4 起在 spring.web.error 下
+server:
+  port: 8082
+  servlet:
+    session:
+      timeout: 2h                 # 登录会话 2 小时无操作过期
+      cookie:
+        http-only: true           # 脚本读不到会话 Cookie
+        same-site: strict         # 只有本站页面发出的请求才带 Cookie,防跨站请求伪造
+app:
+  security:
+    # 登录页「重置管理员密码」按钮:不需要登录就能把 admin 重置为 123456(登录后强制改密码)。
+    # 任何能打开登录页的人都能用,只适合本地开发;上线前务必改为 false。
+    admin-reset-enabled: false
+  orders:
+    pay-timeout-minutes: 30       # 下单后多少分钟内必须支付,超时自动取消并归还名额
+    timeout-check-ms: 60000       # 多久检查一次超时订单(毫秒)
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true   # student_id -> studentId
+  mapper-locations: classpath:mapper/*.xml
+logging:
+  level:
+    com.example.demo.mapper: debug
+

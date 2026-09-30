@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>课程管理 · 课程管理</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app"></div>
+<script src="js/common.js"></script>
+<script>
+/* ---------- 每日节次编辑器:若干行「开始时间 — 结束时间」,值以 JSON 存在隐藏输入框里 ---------- */
+const DEFAULT_PERIODS = [{ startTime: '09:00', endTime: '10:30' }];
+const periodsOf = (v) => { try { const a = JSON.parse(v || '[]'); return a.length ? a : DEFAULT_PERIODS; } catch (e) { return DEFAULT_PERIODS; } };
+
+const periodsField = {
+  name: 'periods', label: '每日节次', type: 'custom',
+  help: (mode) => (mode === 'edit'
+    ? '修改日期或节次后会自动增减课次;已有学生报名的课次不能被移除或改时间'
+    : '每天按这些时间上课,开课到结课的每一天都会生成对应课次'),
+  get: (r) => JSON.stringify((r.periods || []).map((p) => ({ startTime: fmtTime(p.startTime), endTime: fmtTime(p.endTime) }))),
+  render: (v) => `<div class="periods">
+      <div class="period-rows"></div>
+      <button type="button" class="btn sm" data-add>+ 添加一节</button>
+      <input type="hidden" name="periods" value="${esc(v)}">
+    </div>`,
+  mount(box) {
+    const hidden = box.querySelector('input[type=hidden]');
+    const rowsEl = box.querySelector('.period-rows');
+    const write = () => {
+      hidden.value = JSON.stringify([...rowsEl.children].map((r) => ({
+        startTime: r.querySelector('[data-s]').value, endTime: r.querySelector('[data-e]').value,
+      })));
+    };
+    const draw = (list) => {
+      rowsEl.innerHTML = list.map((p, i) => `<div class="period-row">
+          <span class="seq">第 ${i + 1} 节</span>
+          <input type="time" data-s value="${esc(p.startTime)}" required aria-label="第 ${i + 1} 节开始时间">
+          <span class="to">—</span>
+          <input type="time" data-e value="${esc(p.endTime)}" required aria-label="第 ${i + 1} 节结束时间">
+          <button type="button" class="act danger" data-rm ${list.length === 1 ? 'disabled' : ''}>删除</button>
+        </div>`).join('');
+      write();
+    };
+    const current = () => JSON.parse(hidden.value || '[]');
+    rowsEl.addEventListener('input', write);
+    rowsEl.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-rm]');
+      if (!b) return;
+      const list = current();
+      list.splice([...rowsEl.children].indexOf(b.closest('.period-row')), 1);
+      draw(list);
+    });
+    box.querySelector('[data-add]').addEventListener('click', () => {
+      const list = current();
+      // 新的一节默认接在最后一节后面 10 分钟,时长与上一节相同
+      const last = list[list.length - 1];
+      const toMin = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+      const toStr = (n) => `${pad(Math.floor(n / 60) % 24)}:${pad(n % 60)}`;
+      const s = last && last.endTime ? toMin(last.endTime) + 10 : 9 * 60;
+      const len = last && last.startTime && last.endTime ? Math.max(30, toMin(last.endTime) - toMin(last.startTime)) : 90;
+      list.push({ startTime: toStr(s), endTime: toStr(s + len) });
+      draw(list);
+    });
+    box._draw = draw;
+    draw(periodsOf(hidden.value));
+  },
+  set(box, v) { box._draw(periodsOf(v)); },
+};
+
+/* ---------- 课次列表对话框:查看每一节的报名情况,可停课 ---------- */
+async function showSessions(lesson, reload) {
+  let list;
+  try {
+    list = await getJSON(`/lessons/${lesson.lessonId}/sessions`);
+  } catch (e) {
+    toast(e.message);
+    return;
+  }
+  const now = new Date();
+  const body = list.length === 0 ? '<p class="note">还没有课次。</p>' : `
+    <div class="table-wrap dlg-table"><table>
+      <thead><tr><th>日期</th><th>时间</th><th>报名</th><th>状态</th><th>操作</th></tr></thead>
+      <tbody>${list.map((s) => {
+        const ended = toDate(s.endAt) < now;
+        const started = toDate(s.startAt) <= now;
+        const pct = s.capacity ? Math.min(100, (s.bookedCount / s.capacity) * 100) : 0;
+        const full = s.status === 'SCHEDULED' && s.availableSeats === 0;
+        const state = s.status === 'CANCELLED' ? badge(SESSION_STATUS, s.status)
+          : ended ? '<span class="badge idle">已结束</span>'
+          : started ? '<span class="badge warn">上课中</span>' : badge(SESSION_STATUS, s.status);
+        return `<tr class="${ended || s.status === 'CANCELLED' ? 'muted' : ''}">
+          <td>${fmtDay(s.startAt)}</td>
+          <td class="mono">${fmtTime(fmtDateTime(s.startAt).slice(11))}-${fmtTime(fmtDateTime(s.endAt).slice(11))}</td>
+          <td><span class="seats ${full ? 'full' : pct >= 80 ? 'low' : ''}"><span class="bar"><i style="width:${pct}%"></i></span><span class="txt">${s.bookedCount} / ${s.capacity}</span></span></td>
+          <td>${state}</td>
+          <td>${s.status === 'SCHEDULED' && !ended && hasPerm('lesson:write')
+            ? `<button type="button" class="act danger" data-stop="${s.sessionId}">停课</button>` : ''}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>`;
+  const active = list.filter((s) => s.status === 'SCHEDULED');
+  const dlg = openDialog({
+    title: `课次 · ${lesson.title}`,
+    body: `<p class="note">共 ${list.length} 节,正常 ${active.length} 节,报名 ${active.reduce((n, s) => n + s.bookedCount, 0)} 人次。</p>${body}`,
+    wide: true,
+  });
+  dlg.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-stop]');
+    if (!b) return;
+    const s = list.find((x) => String(x.sessionId) === b.dataset.stop);
+    openDialog({
+      title: '停课',
+      body: `<p>确定将 ${esc(fmtSpan(s.startAt, s.endAt))} 这节课停课吗?</p>
+        <p class="note">${s.bookedCount > 0
+          ? `该课次有 ${s.bookedCount} 人报名,将全部退课;已支付的按单节价格退回学生余额。`
+          : '该课次还没有人报名。'}停课后不能恢复,也不能再报名。</p>`,
+      submit: '停课',
+      danger: true,
+      success: '已停课',
+      onSubmit: () => api('PUT', `/lessons/${lesson.lessonId}/sessions/${s.sessionId}/cancel`),
+      after: () => { dlg.close(); reload(); showSessions(lesson, reload); },
+    });
+  });
+}
+
+initListPage({
+  key: 'lessons',
+  entity: '课程',
+  title: '课程列表',
+  subtitle: '设置上课日期和每日节次,按课次管理名额',
+  search: '搜索课程标题、描述',
+  empty: '还没有课程',
+  emptyHint: '点击「新增课程」添加第一门课程。',
+  endpoint: '/lessons',
+  idOf: (r) => r.lessonId,
+  rowName: (r) => r.title,
+  // 前台只能查看课程;管理员和教务可以增删改、停课
+  can: (me) => { const w = hasPerm('lesson:write'); return { create: w, update: w, remove: w }; },
+  removeNote: '如果该课程已有订单,将无法删除。',
+  fields: [
+    { name: 'title', label: '标题', required: true, attrs: 'maxlength="200"' },
+    { name: 'category', label: '分类', attrs: 'maxlength="50"' },
+    { name: 'price', label: '单节价格(元)', type: 'number', required: true, attrs: 'min="0" step="0.01"', help: '学生每选一节课按这个价格计费' },
+    {
+      name: 'capacity', label: '每节名额', type: 'number', required: true, attrs: 'min="1" step="1"',
+      help: (mode) => (mode === 'edit' ? '修改后同步到所有课次,不能少于任一节课的已报名人数' : '每一节课最多多少人'),
+    },
+    {
+      name: 'pointsEnabled', label: '积分抵扣', type: 'select', required: true,
+      options: () => [['true', '支持(学生可以用积分抵扣部分或全部费用)'], ['false', '不支持(只能用余额支付)']],
+      get: (r) => String(r.pointsEnabled !== false),
+      help: '不支持时,用余额支付仍然会获得积分',
+    },
+    { name: 'startDate', label: '开课日期', type: 'date', required: true, get: (r) => (r.startDate ? fmtDate(r.startDate) : '') },
+    { name: 'endDate', label: '结课日期', type: 'date', required: true, get: (r) => (r.endDate ? fmtDate(r.endDate) : '') },
+    periodsField,
+    { name: 'description', label: '描述', type: 'textarea' },
+  ],
+  toBody: (d) => ({
+    title: d.title.trim(),
+    category: d.category.trim() || null,
+    price: Number(d.price),
+    capacity: Number(d.capacity),
+    pointsEnabled: d.pointsEnabled === 'true',
+    startDate: d.startDate,
+    endDate: d.endDate,
+    periods: JSON.parse(d.periods || '[]'),
+    description: d.description.trim() || null,
+  }),
+  // 复制课程:带出全部字段(含日期和节次),标题加"(副本)"
+  copy: {
+    label: (r) => `${r.title}${r.category ? ' · ' + r.category : ''}  ${money(r.price)}/节`,
+    adjust: (v) => { v.title = `${v.title}(副本)`.slice(0, 200); },
+  },
+  actions: [
+    { label: '课次', open: (r, ctx, reload) => showSessions(r, reload) },
+  ],
+  filter: {
+    all: '全部分类',
+    options: (rows) => [...new Set(rows.map((r) => r.category).filter(Boolean))].map((c) => [c, c]),
+    match: (r, v) => r.category === v,
+  },
+  // 相关信息合并成两行显示,列少一些,一屏放得下
+  columns: [
+    { title: 'ID', cls: 'id', cell: (r) => r.lessonId },
+    {
+      title: '课程',
+      cell: (r) => `<span class="cell-main">${esc(r.title)}</span><span class="cell-sub">${esc(r.category || '未分类')}`
+        + `${r.pointsEnabled === false ? '<span class="tag no-pts" title="该课程只能用余额支付">不可用积分</span>' : ''}</span>`,
+    },
+    {
+      title: '上课时间',
+      cell: (r) => {
+        if (!r.startDate) return '—';
+        const days = Math.round((toDate(fmtDate(r.endDate)) - toDate(fmtDate(r.startDate))) / 86400000) + 1;
+        return `<span class="cell-main nw">${fmtDate(r.startDate).slice(5)} ~ ${fmtDate(r.endDate).slice(5)}<span class="sub-id">${days} 天</span></span>`
+          + `<span class="cell-sub">${(r.periods || []).map((p) => `<span class="chip">${fmtTime(p.startTime)}-${fmtTime(p.endTime)}</span>`).join('') || '—'}</span>`;
+      },
+    },
+    { title: '单节价格', cls: 'num', cell: (r) => money(r.price) },
+    {
+      title: '报名 / 下节课',
+      cell: (r) => {
+        const cap = r.seatTotal || 0, booked = r.bookedCount || 0;
+        const pct = cap > 0 ? Math.min(100, (booked / cap) * 100) : 0;
+        return `<span class="seats ${cap && booked >= cap ? 'full' : pct >= 80 ? 'low' : ''}"><span class="bar"><i style="width:${pct}%"></i></span>`
+          + `<span class="txt">${booked} / ${cap}</span></span>`
+          + `<span class="cell-sub">${r.sessionCount} 节 · ${r.nextSessionAt
+            ? `下节 ${fmtDay(r.nextSessionAt)} <span class="mono">${fmtTime(fmtDateTime(r.nextSessionAt).slice(11))}</span>`
+            : '已结束'}</span>`;
+      },
+    },
+  ],
+  text: (r) => [r.title, r.description].join(' '),
+  stats: (rows) => {
+    const sessions = rows.reduce((n, r) => n + (r.sessionCount || 0), 0);
+    const seats = rows.reduce((n, r) => n + (r.seatTotal || 0), 0);
+    const booked = rows.reduce((n, r) => n + (r.bookedCount || 0), 0);
+    const upcoming = rows.filter((r) => r.nextSessionAt).length;
+    return [
+      { label: '课程总数', value: rows.length, hint: `${upcoming} UPCOMING`, tone: 'accent' },
+      { label: '课次总数', value: sessions, hint: 'SESSIONS' },
+      { label: '报名人次', value: booked, hint: `OF ${seats} SEATS`, tone: 'ok' },
+      { label: '名额使用率', value: seats ? `${Math.round(booked / seats * 100)}%` : '0%', hint: 'OCCUPANCY' },
+    ];
+  },
+  load: async () => ({ rows: await getJSON('/lessons') }),
+});
+</script>
+</body>
+</html>

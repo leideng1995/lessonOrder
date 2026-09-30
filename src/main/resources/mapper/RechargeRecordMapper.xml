@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.RechargeRecordMapper">
+
+    <resultMap id="BaseResultMap" type="com.example.demo.model.RechargeRecord">
+        <id     column="record_id"     property="recordId"/>
+        <result column="student_id"    property="studentId"/>
+        <result column="amount"        property="amount"/>
+        <result column="balance_after" property="balanceAfter"/>
+        <result column="bonus_points"  property="bonusPoints"/>
+        <result column="created_at"    property="createdAt"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        record_id, student_id, amount, balance_after, bonus_points, created_at
+    </sql>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="recordId" keyColumn="record_id">
+        INSERT INTO recharge_record (student_id, amount, balance_after, bonus_points)
+        VALUES (#{studentId}, #{amount}, #{balanceAfter}, #{bonusPoints})
+    </insert>
+
+    <select id="findAll" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM recharge_record
+        <where>
+            <if test="studentId != null">
+                student_id = #{studentId}
+            </if>
+        </where>
+        ORDER BY record_id DESC
+    </select>
+
+</mapper>

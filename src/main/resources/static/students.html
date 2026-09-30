@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>学生管理 · 课程管理</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app"></div>
+<script src="js/common.js"></script>
+<script>
+initListPage({
+  key: 'students',
+  entity: '学生',
+  title: '学生列表',
+  subtitle: '查看、添加和维护学生',
+  search: '搜索姓名、邮箱、手机号',
+  empty: '还没有学生',
+  emptyHint: '点击「新增学生」添加第一位学生。',
+  endpoint: '/students',
+  idOf: (r) => r.studentId,
+  rowName: (r) => fullName(r),
+  can: { create: true, update: true, remove: true },
+  removeNote: '如果该学生已有订单,将无法删除。',
+  fields: [
+    { name: 'lastName', label: '姓', required: true, attrs: 'maxlength="50"' },
+    { name: 'firstName', label: '名', required: true, attrs: 'maxlength="50"' },
+    { name: 'email', label: '邮箱', type: 'email', required: true, attrs: 'maxlength="100"' },
+    {
+      name: 'password', label: '密码', type: 'password', required: 'create',
+      attrs: 'minlength="6" autocomplete="new-password"',
+      get: () => '',
+      help: (mode) => (mode === 'edit' ? '留空表示不修改密码' : '至少 6 位'),
+    },
+    { name: 'phone', label: '手机', type: 'tel', attrs: 'maxlength="20"' },
+    { name: 'dateOfBirth', label: '出生日期', type: 'date', get: (r) => (r.dateOfBirth ? fmtDate(r.dateOfBirth) : '') },
+    {
+      name: 'balance', label: '初始余额(元)', type: 'number', only: 'create',
+      attrs: 'min="0" max="100000" step="0.01" placeholder="0.00"',
+      help: '创建后可通过「充值」增加余额',
+    },
+  ],
+  toBody: (d, mode) => {
+    const body = {
+      firstName: d.firstName.trim(),
+      lastName: d.lastName.trim(),
+      email: d.email.trim(),
+      phone: d.phone.trim() || null,
+      dateOfBirth: d.dateOfBirth || null,
+    };
+    if (d.password) body.password = d.password; // 编辑时留空则不修改
+    if (mode === 'create' && d.balance) body.balance = Number(d.balance); // 余额只能在创建时设置,之后通过充值变动
+    return body;
+  },
+  actions: [
+    {
+      label: '充值',
+      title: '余额充值',
+      confirm: (r) => `为「${fullName(r)}」充值,当前余额 ${money(r.balance)}。每充值 1 元赠送 1 积分。`,
+      fields: [{ name: 'amount', label: '充值金额(元)', type: 'number', required: true, attrs: 'min="0.01" max="100000" step="0.01" autofocus' }],
+      run: (r, d) => api('POST', `/students/${r.studentId}/recharge`, { amount: Number(d.amount) }),
+      success: '充值成功,已赠送积分',
+    },
+    { label: '课表', href: (r) => `schedule.html?studentId=${r.studentId}`, menu: true },
+    { label: '充值记录', href: (r) => `recharges.html?filter=${r.studentId}`, menu: true },
+    { label: '余额流水', href: (r) => `balance.html?filter=${r.studentId}`, menu: true },
+    { label: '积分记录', href: (r) => `points.html?filter=${r.studentId}`, menu: true },
+  ],
+  // 相关信息合并成两行显示,列少一些,一屏放得下
+  columns: [
+    { title: 'ID', cls: 'id', cell: (r) => r.studentId },
+    { title: '学生', cell: (r) => `<span class="cell-main">${esc(fullName(r))}</span><span class="cell-sub">${esc(r.email)}</span>` },
+    {
+      title: '手机 / 生日',
+      cell: (r) => `<span class="cell-main mono">${esc(r.phone || '—')}</span><span class="cell-sub">${r.dateOfBirth ? '生日 ' + fmtDate(r.dateOfBirth) : '未填生日'}</span>`,
+    },
+    {
+      title: '余额 / 积分',
+      cls: 'num',
+      cell: (r) => `<span class="cell-main balance${Number(r.balance) > 0 ? '' : ' zero'}">${money(r.balance ?? 0)}</span>`
+        + `<span class="cell-sub ${r.points > 0 ? 'pts' : ''}" title="可抵 ${money((r.points || 0) / 100)}">${pts(r.points)} 积分</span>`,
+    },
+    { title: '注册时间', cls: 'nw', cell: (r) => `<span title="${esc(fmtDateTime(r.registrationDate))}">${fmtDate(r.registrationDate)}</span>` },
+  ],
+  text: (r) => [fullName(r), r.email, r.phone].join(' '),
+  stats: (rows) => {
+    const ym = fmtDate([new Date().getFullYear(), new Date().getMonth() + 1, 1]).slice(0, 7);
+    const newThisMonth = rows.filter((r) => fmtDate(r.registrationDate).slice(0, 7) === ym).length;
+    const total = rows.reduce((n, r) => n + (Number(r.balance) || 0), 0);
+    return [
+      { label: '学生总数', value: rows.length, hint: 'TOTAL STUDENTS', tone: 'accent' },
+      { label: '本月新增', value: newThisMonth, hint: `SINCE ${ym}-01`, tone: 'ok' },
+      { label: '积分总计', value: pts(rows.reduce((n, r) => n + (r.points || 0), 0)), hint: 'TOTAL POINTS (100 = ¥1)' },
+      { label: '余额总计', value: money(total), hint: 'TOTAL BALANCE (CNY)' },
+    ];
+  },
+  load: async () => ({ rows: await getJSON('/students') }),
+});
+</script>
+</body>
+</html>

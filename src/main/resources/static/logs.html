@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>操作日志 · 课程管理</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app"></div>
+<script src="js/common.js"></script>
+<script>
+// 操作日志只读,仅管理员:登录/退出、所有写操作、越权被拒、系统自动操作;查询类请求不记录,密码已打码
+const today = () => fmtDate([new Date().getFullYear(), new Date().getMonth() + 1, new Date().getDate()]);
+
+/* 浏览器 User-Agent 缩写成"Chrome · Windows"这种 */
+function shortUA(ua) {
+  if (!ua) return '';
+  const b = /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : /node/i.test(ua) ? '脚本' : '其他';
+  const os = /Windows/.test(ua) ? 'Windows' : /Mac OS/.test(ua) ? 'macOS' : /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Linux/.test(ua) ? 'Linux' : '';
+  return os ? `${b} · ${os}` : b;
+}
+
+initListPage({
+  key: 'logs',
+  entity: '操作日志',
+  heading: '操作日志',
+  title: '最近 2000 条',
+  subtitle: '登录记录和所有修改数据的操作(新增、修改、删除、充值、支付、退课……),查询不记录,密码已打码',
+  search: '搜索用户、操作、IP、内容、失败原因',
+  empty: '还没有日志',
+  emptyHint: '用户登录或修改数据后,记录会出现在这里。',
+  endpoint: '/logs',
+  idOf: (r) => r.logId,
+  rowName: (r) => `#${r.logId}`,
+  pageSize: 20,
+  filter: {
+    all: '全部类型',
+    options: () => Object.entries(LOG_CATEGORY).map(([k, v]) => [k, v.text]),
+    match: (r, v) => r.category === v,
+  },
+  columns: [
+    {
+      title: '时间',
+      cls: 'nw',
+      cell: (r) => `<span class="cell-main plain mono">${fmtDateTime(r.createdAt).slice(5)}</span>`
+        + (r.durationMs != null ? `<span class="cell-sub">耗时 ${r.durationMs} ms</span>` : ''),
+    },
+    {
+      title: '用户',
+      cell: (r) => `<span class="cell-main">${esc(r.displayName || r.username || '—')}</span>`
+        + `<span class="cell-sub">${esc(r.username || '')}${r.role ? ' · ' + esc(r.role) : ''}${!r.userId && r.category === 'LOGIN' && r.username ? ' · 未登录' : ''}</span>`,
+    },
+    {
+      title: '操作',
+      cell: (r) => `<span class="cell-main">${badge(LOG_CATEGORY, r.category)} ${esc(r.action)}</span>`
+        + (r.path ? `<span class="cell-sub mono">${esc(r.method)} ${esc(r.path)}</span>` : ''),
+    },
+    {
+      title: '内容',
+      cell: (r) => (r.detail
+        ? `<span class="log-detail mono" title="${esc(r.detail)}">${esc(r.detail)}</span>`
+        : '<span class="muted-text">—</span>'),
+    },
+    {
+      title: '结果',
+      cell: (r) => (r.success ? '<span class="badge ok">成功</span>' : '<span class="badge bad">失败</span>')
+        + (r.error ? `<span class="cell-sub" title="${esc(r.error)}">${esc(r.error)}</span>` : ''),
+    },
+    {
+      title: 'IP / 浏览器',
+      cls: 'nw',
+      cell: (r) => `<span class="cell-main plain mono">${esc(r.ip || '—')}${/^(::1|127\.0\.0\.1|0:0:0:0:0:0:0:1)$/.test(r.ip || '') ? '<span class="tag">本机</span>' : ''}</span><span class="cell-sub" title="${esc(r.userAgent || '')}">${esc(shortUA(r.userAgent))}</span>`,
+    },
+  ],
+  text: (r) => [r.displayName, r.username, r.action, r.path, r.ip, r.detail, r.error].join(' '),
+  stats: (rows) => {
+    const t = today();
+    const todays = rows.filter((r) => fmtDate(r.createdAt) === t);
+    const logins = todays.filter((r) => r.category === 'LOGIN' && r.action === '登录');
+    const loginFails = todays.filter((r) => r.category === 'LOGIN' && r.action === '登录失败');
+    const ops = todays.filter((r) => r.category === 'OPERATION');
+    const bad = todays.filter((r) => (r.category === 'OPERATION' && !r.success) || r.category === 'DENIED');
+    return [
+      { label: '今日登录', value: logins.length, hint: `${new Set(logins.map((r) => r.userId)).size} 个账号`, tone: 'ok' },
+      { label: '今日登录失败', value: loginFails.length, hint: 'LOGIN FAILURES', tone: loginFails.length ? 'warn' : '' },
+      { label: '今日操作', value: ops.length, hint: 'OPERATIONS', tone: 'accent' },
+      { label: '今日失败 / 越权', value: bad.length, hint: 'FAILED OR DENIED', tone: bad.length ? 'warn' : '' },
+    ];
+  },
+  load: async () => ({ rows: await getJSON('/logs?limit=2000') }),
+});
+</script>
+</body>
+</html>

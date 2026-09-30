@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>积分记录 · 课程管理</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app"></div>
+<script src="js/common.js"></script>
+<script>
+// 积分流水只读:支付获得、抵扣支付、退课退回、退课扣回、充值赠送时自动生成。100 积分 = 1 元
+initListPage({
+  key: 'points',
+  entity: '积分记录',
+  heading: '积分记录',
+  title: '积分流水',
+  subtitle: '支付时按余额实付金额 × 2、充值时按充值金额 × 1 获得积分,100 积分可抵 1 元',
+  search: '搜索学生姓名、订单号、说明',
+  empty: '还没有积分记录',
+  emptyHint: '学生充值或用余额支付订单后,获得的积分会记录在这里。',
+  endpoint: '/points',
+  idOf: (r) => r.recordId,
+  rowName: (r) => `#${r.recordId}`,
+  filter: {
+    all: '全部学生',
+    options: (rows, ctx) => [...new Set(rows.map((r) => r.studentId))].map((id) => {
+      const s = ctx.students.get(id);
+      return [String(id), s ? `${fullName(s)}(#${id})` : `学生 #${id}`];
+    }),
+    match: (r, v) => String(r.studentId) === v,
+  },
+  columns: [
+    { title: '记录号', cls: 'id', cell: (r) => r.recordId },
+    {
+      title: '学生',
+      cell: (r, ctx) => {
+        const s = ctx.students.get(r.studentId);
+        return `${esc(s ? fullName(s) : '未知学生')}<span class="sub-id">#${r.studentId}</span>`;
+      },
+    },
+    { title: '类型', cell: (r) => badge(POINTS_TYPE, r.type) },
+    {
+      title: '变动 / 余额',
+      cls: 'num',
+      cell: (r) => `<span class="cell-main ${r.changePoints >= 0 ? 'balance' : 'minus'}">${r.changePoints >= 0 ? '+' : ''}${pts(r.changePoints)}</span>`
+        + `<span class="cell-sub">变动后 ${pts(r.balanceAfter)}</span>`,
+    },
+    {
+      title: '说明',
+      cell: (r) => `<span class="cell-main plain">${esc(r.remark || '—')}</span>`
+        + (r.orderId ? `<span class="cell-sub mono">订单 #${r.orderId}</span>` : ''),
+    },
+    { title: '时间', cls: 'nw', cell: (r) => fmtDateTime(r.createdAt) },
+  ],
+  text: (r, ctx) => {
+    const s = ctx.students.get(r.studentId);
+    return [r.recordId, r.orderId, s ? fullName(s) : '', r.remark].join(' ');
+  },
+  stats: (rows, ctx) => {
+    const sum = (t) => rows.filter((r) => r.type === t).reduce((n, r) => n + r.changePoints, 0);
+    const earned = sum('EARN') + sum('CLAWBACK') + sum('RECHARGE');
+    const used = -(sum('REDEEM') + sum('REFUND'));
+    const holding = ctx.students ? [...ctx.students.values()].reduce((n, s) => n + (s.points || 0), 0) : 0;
+    return [
+      { label: '累计发放', value: pts(earned), hint: 'NET EARNED', tone: 'ok' },
+      { label: '累计抵扣', value: pts(used), hint: `≈ ${money(used / 100)}`, tone: 'warn' },
+      { label: '学生持有积分', value: pts(holding), hint: `≈ ${money(holding / 100)}`, tone: 'accent' },
+      { label: '流水笔数', value: rows.length, hint: 'RECORDS' },
+    ];
+  },
+  load: async () => {
+    const [rows, students] = await Promise.all([getJSON('/points'), getJSON('/students')]);
+    return { rows, ctx: { students: new Map(students.map((s) => [s.studentId, s])) } };
+  },
+});
+</script>
+</body>
+</html>

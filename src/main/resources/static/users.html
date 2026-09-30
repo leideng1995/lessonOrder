@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>用户管理 · 课程管理</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app"></div>
+<script src="js/common.js"></script>
+<script>
+/* 系统用户管理(仅管理员):新建账号、分配角色、停用、重置密码。不提供删除,停用即可 */
+const ROLE_CLS = { ADMIN: 'bad', RECEPTION: 'ok', ACADEMIC: 'warn' };
+const MENU_NAME = Object.fromEntries(NAV.map(([k, label]) => [k, label]));
+const roleBadge = (r, ctx) => {
+  const role = ctx.roles.find((x) => x.code === r.role);
+  return `<span class="badge ${ROLE_CLS[r.role] || 'idle'}">${esc(role ? role.name : r.role)}</span>`;
+};
+
+initListPage({
+  key: 'users',
+  entity: '用户',
+  heading: '用户管理',
+  title: '系统用户',
+  subtitle: '管理后台登录账号和角色,不同角色能进入的菜单不同',
+  search: '搜索用户名、姓名',
+  empty: '还没有用户',
+  emptyHint: '点击「新增用户」添加账号。',
+  endpoint: '/users',
+  idOf: (r) => r.userId,
+  rowName: (r) => `${r.displayName}(${r.username})`,
+  can: { create: true, update: true, remove: false },
+  fields: [
+    {
+      name: 'username', label: '用户名', required: true, only: 'create',
+      attrs: 'maxlength="32" pattern="[a-z0-9_.\\-]{3,32}" autocomplete="off" spellcheck="false"',
+      help: '登录用,3~32 位小写字母、数字或 _ . -,创建后不能修改',
+    },
+    { name: 'displayName', label: '姓名', required: true, attrs: 'maxlength="50"' },
+    {
+      name: 'role', label: '角色', type: 'select', required: true,
+      options: (ctx) => ctx.roles.map((r) => [r.code, `${r.name}:${r.menus.map((m) => MENU_NAME[m] || m).join('、')}`]),
+    },
+    {
+      name: 'enabled', label: '状态', type: 'select', required: true, only: 'edit',
+      options: () => [['true', '启用'], ['false', '停用(不能登录)']],
+      get: (r) => String(r.enabled),
+      help: '不能停用自己;系统至少要保留一个启用的管理员',
+    },
+    {
+      name: 'password', label: '初始密码', type: 'password', required: true, only: 'create',
+      attrs: 'minlength="8" maxlength="64" autocomplete="new-password"',
+      help: '8~64 位,同时包含字母和数字;用户首次登录后必须修改',
+    },
+  ],
+  toBody: (d, mode) => (mode === 'create'
+    ? { username: d.username.trim().toLowerCase(), displayName: d.displayName.trim(), role: d.role, password: d.password }
+    : { displayName: d.displayName.trim(), role: d.role, enabled: d.enabled === 'true' }),
+  actions: [
+    {
+      label: '重置密码',
+      title: '重置密码',
+      confirm: (r) => `为「${r.displayName}(${r.username})」设置一个临时密码,对方下次登录时必须修改。`,
+      fields: [{ name: 'password', label: '临时密码', type: 'password', required: true, attrs: 'minlength="8" maxlength="64" autocomplete="new-password"', help: '8~64 位,同时包含字母和数字' }],
+      run: (r, d) => api('PUT', `/users/${r.userId}/password`, { password: d.password }),
+      success: '密码已重置',
+    },
+  ],
+  filter: {
+    all: '全部角色',
+    options: (rows, ctx) => ctx.roles.map((r) => [r.code, r.name]),
+    match: (r, v) => r.role === v,
+  },
+  columns: [
+    { title: 'ID', cls: 'id', cell: (r) => r.userId },
+    {
+      title: '用户',
+      cell: (r) => `<span class="cell-main">${esc(r.displayName)}${ME && r.userId === ME.userId ? '<span class="tag">我</span>' : ''}</span>`
+        + `<span class="cell-sub mono">${esc(r.username)}</span>`,
+    },
+    { title: '角色', cell: roleBadge },
+    {
+      title: '状态',
+      cell: (r) => '<span class="badge-stack">' + (r.enabled ? '<span class="badge ok">启用</span>' : '<span class="badge idle">停用</span>')
+        + (r.mustChangePassword ? '<span class="badge warn">待改密码</span>' : '') + '</span>',
+    },
+    {
+      title: '最近登录',
+      cls: 'nw',
+      cell: (r) => (r.lastLoginAt ? `<span class="cell-main plain">${fmtDateTime(r.lastLoginAt)}</span>` : '<span class="cell-main plain muted-text">从未登录</span>')
+        + `<span class="cell-sub">创建于 ${fmtDate(r.createdAt)}</span>`,
+    },
+  ],
+  text: (r) => [r.username, r.displayName].join(' '),
+  stats: (rows) => [
+    { label: '用户总数', value: rows.length, hint: 'ACCOUNTS', tone: 'accent' },
+    { label: '启用中', value: rows.filter((r) => r.enabled).length, hint: 'ENABLED', tone: 'ok' },
+    { label: '管理员', value: rows.filter((r) => r.role === 'ADMIN' && r.enabled).length, hint: 'ADMINS' },
+    { label: '待修改密码', value: rows.filter((r) => r.mustChangePassword).length, hint: 'MUST CHANGE', tone: 'warn' },
+  ],
+  load: async () => {
+    const [rows, roles] = await Promise.all([getJSON('/users'), getJSON('/users/roles')]);
+    return { rows, ctx: { roles } };
+  },
+});
+</script>
+</body>
+</html>

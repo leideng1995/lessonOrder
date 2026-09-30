@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.OperationLogMapper">
+
+    <resultMap id="BaseResultMap" type="com.example.demo.model.OperationLog">
+        <id     column="log_id"       property="logId"/>
+        <result column="category"     property="category"/>
+        <result column="action"       property="action"/>
+        <result column="user_id"      property="userId"/>
+        <result column="username"     property="username"/>
+        <result column="display_name" property="displayName"/>
+        <result column="role"         property="role"/>
+        <result column="method"       property="method"/>
+        <result column="path"         property="path"/>
+        <result column="detail"       property="detail"/>
+        <result column="success"      property="success"/>
+        <result column="status"       property="status"/>
+        <result column="error"        property="error"/>
+        <result column="ip"           property="ip"/>
+        <result column="user_agent"   property="userAgent"/>
+        <result column="duration_ms"  property="durationMs"/>
+        <result column="created_at"   property="createdAt"/>
+    </resultMap>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="logId" keyColumn="log_id">
+        INSERT INTO operation_log (category, action, user_id, username, display_name, role, method, path, detail,
+                                   success, status, error, ip, user_agent, duration_ms)
+        VALUES (#{category}, #{action}, #{userId}, #{username}, #{displayName}, #{role}, #{method}, #{path}, #{detail},
+                #{success}, #{status}, #{error}, #{ip}, #{userAgent}, #{durationMs})
+    </insert>
+
+    <select id="findRecent" resultMap="BaseResultMap">
+        SELECT log_id, category, action, user_id, username, display_name, role, method, path, detail,
+               success, status, error, ip, user_agent, duration_ms, created_at
+        FROM operation_log
+        <where>
+            <if test="category != null">
+                category = #{category}
+            </if>
+        </where>
+        ORDER BY log_id DESC
+        LIMIT #{limit}
+    </select>
+
+</mapper>

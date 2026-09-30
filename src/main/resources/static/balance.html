@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>余额流水 · 课程管理</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app"></div>
+<script src="js/common.js"></script>
+<script>
+// 余额流水只读:充值、新建学生的初始余额、支付扣款、退课退款时自动生成;每个学生的流水合计 = 当前余额
+initListPage({
+  key: 'balance',
+  entity: '余额流水',
+  heading: '余额流水',
+  title: '余额流水',
+  subtitle: '学生余额的每一笔变动:充值、支付、退款,每个学生的流水合计等于当前余额',
+  search: '搜索学生姓名、订单号、说明',
+  empty: '还没有余额流水',
+  emptyHint: '学生充值、支付或退课后,余额变动会记录在这里。',
+  endpoint: '/balance',
+  idOf: (r) => r.recordId,
+  rowName: (r) => `#${r.recordId}`,
+  filter: {
+    all: '全部学生',
+    options: (rows, ctx) => [...new Set(rows.map((r) => r.studentId))].map((id) => {
+      const s = ctx.students.get(id);
+      return [String(id), s ? `${fullName(s)}(#${id})` : `学生 #${id}`];
+    }),
+    match: (r, v) => String(r.studentId) === v,
+  },
+  columns: [
+    { title: '记录号', cls: 'id', cell: (r) => r.recordId },
+    {
+      title: '学生',
+      cell: (r, ctx) => {
+        const s = ctx.students.get(r.studentId);
+        return `<span class="cell-main">${esc(s ? fullName(s) : '未知学生')}<span class="sub-id">#${r.studentId}</span></span>`;
+      },
+    },
+    { title: '类型', cell: (r) => badge(BALANCE_TYPE, r.type) },
+    {
+      title: '变动 / 余额',
+      cls: 'num',
+      cell: (r) => {
+        const c = Number(r.changeAmount);
+        return `<span class="cell-main ${c >= 0 ? 'balance' : 'minus'}">${c >= 0 ? '+' : '-'}${money(Math.abs(c))}</span>`
+          + `<span class="cell-sub">变动后 ${money(r.balanceAfter)}</span>`;
+      },
+    },
+    {
+      title: '说明',
+      cell: (r) => `<span class="cell-main plain">${esc(r.remark || '—')}</span>`
+        + (r.orderId ? `<span class="cell-sub mono">订单 #${r.orderId}</span>` : ''),
+    },
+    { title: '时间', cls: 'nw', cell: (r) => fmtDateTime(r.createdAt) },
+  ],
+  text: (r, ctx) => {
+    const s = ctx.students.get(r.studentId);
+    return [r.recordId, r.orderId, s ? fullName(s) : '', r.remark].join(' ');
+  },
+  stats: (rows, ctx) => {
+    const sum = (t) => rows.filter((r) => r.type === t).reduce((n, r) => n + Number(r.changeAmount), 0);
+    const holding = ctx.students ? [...ctx.students.values()].reduce((n, s) => n + (Number(s.balance) || 0), 0) : 0;
+    return [
+      { label: '充值合计', value: money(sum('RECHARGE') + sum('INITIAL')), hint: 'IN (CNY)', tone: 'ok' },
+      { label: '支付合计', value: money(-sum('PAY')), hint: 'SPENT (CNY)', tone: 'warn' },
+      { label: '退款合计', value: money(sum('REFUND')), hint: 'REFUNDED (CNY)' },
+      { label: '学生余额总计', value: money(holding), hint: 'CURRENT BALANCE', tone: 'accent' },
+    ];
+  },
+  load: async () => {
+    const [rows, students] = await Promise.all([getJSON('/balance'), getJSON('/students')]);
+    return { rows, ctx: { students: new Map(students.map((s) => [s.studentId, s])) } };
+  },
+});
+</script>
+</body>
+</html>

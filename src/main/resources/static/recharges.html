@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>充值记录 · 课程管理</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="app"></div>
+<script src="js/common.js"></script>
+<script>
+// 充值记录只读:记录在学生页「充值」时自动生成
+initListPage({
+  key: 'recharges',
+  entity: '充值记录',
+  heading: '充值记录',
+  title: '充值流水',
+  subtitle: '查看每一笔学生余额充值',
+  search: '搜索学生姓名、邮箱、记录号',
+  empty: '还没有充值记录',
+  emptyHint: '在学生页点击「充值」后,记录会出现在这里。',
+  endpoint: '/recharges',
+  idOf: (r) => r.recordId,
+  rowName: (r) => `#${r.recordId}`,
+  filter: {
+    all: '全部学生',
+    // 只列出有充值记录的学生
+    options: (rows, ctx) => [...new Set(rows.map((r) => r.studentId))].map((id) => {
+      const s = ctx.students.get(id);
+      return [String(id), s ? `${fullName(s)}(#${id})` : `学生 #${id}`];
+    }),
+    match: (r, v) => String(r.studentId) === v,
+  },
+  columns: [
+    { title: '记录号', cls: 'id', cell: (r) => r.recordId },
+    {
+      title: '学生',
+      cell: (r, ctx) => {
+        const s = ctx.students.get(r.studentId);
+        return `${esc(s ? fullName(s) : '未知学生')}<span class="sub-id">#${r.studentId}</span>`;
+      },
+    },
+    {
+      title: '充值金额',
+      cls: 'num',
+      cell: (r) => `<span class="cell-main balance">+${money(r.amount)}</span>`
+        + (r.bonusPoints ? `<span class="cell-sub pts">赠送 +${pts(r.bonusPoints)} 积分</span>` : ''),
+    },
+    { title: '充值后余额', cls: 'num', cell: (r) => money(r.balanceAfter) },
+    { title: '充值时间', cls: 'nw', cell: (r) => fmtDateTime(r.createdAt) },
+  ],
+  text: (r, ctx) => {
+    const s = ctx.students.get(r.studentId);
+    return [r.recordId, s ? fullName(s) : '', s ? s.email : ''].join(' ');
+  },
+  stats: (rows) => {
+    const today = fmtDate([new Date().getFullYear(), new Date().getMonth() + 1, new Date().getDate()]);
+    const sum = (list) => list.reduce((n, r) => n + (Number(r.amount) || 0), 0);
+    const todays = rows.filter((r) => fmtDate(r.createdAt) === today);
+    return [
+      { label: '充值笔数', value: rows.length, hint: 'RECHARGE COUNT', tone: 'accent' },
+      { label: '充值总额', value: money(sum(rows)), hint: 'TOTAL (CNY)', tone: 'ok' },
+      { label: '赠送积分', value: pts(rows.reduce((n, r) => n + (r.bonusPoints || 0), 0)), hint: 'BONUS POINTS', tone: 'accent' },
+      { label: '今日充值', value: money(sum(todays)), hint: `${todays.length} TODAY` },
+      { label: '充值学生数', value: new Set(rows.map((r) => r.studentId)).size, hint: 'STUDENTS' },
+    ];
+  },
+  // 记录里只有学生 ID,姓名从学生接口取
+  load: async () => {
+    const [rows, students] = await Promise.all([getJSON('/recharges'), getJSON('/students')]);
+    return { rows, ctx: { students: new Map(students.map((s) => [s.studentId, s])) } };
+  },
+});
+</script>
+</body>
+</html>

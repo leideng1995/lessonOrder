@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.demo.mapper.BalanceRecordMapper">
+
+    <resultMap id="BaseResultMap" type="com.example.demo.model.BalanceRecord">
+        <id     column="record_id"     property="recordId"/>
+        <result column="student_id"    property="studentId"/>
+        <result column="order_id"      property="orderId"/>
+        <result column="change_amount" property="changeAmount"/>
+        <result column="balance_after" property="balanceAfter"/>
+        <result column="type"          property="type"/>
+        <result column="remark"        property="remark"/>
+        <result column="created_at"    property="createdAt"/>
+    </resultMap>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="recordId" keyColumn="record_id">
+        INSERT INTO balance_record (student_id, order_id, change_amount, balance_after, type, remark)
+        VALUES (#{studentId}, #{orderId}, #{changeAmount}, #{balanceAfter}, #{type}, #{remark})
+    </insert>
+
+    <select id="findAll" resultMap="BaseResultMap">
+        SELECT record_id, student_id, order_id, change_amount, balance_after, type, remark, created_at
+        FROM balance_record
+        <where>
+            <if test="studentId != null">
+                student_id = #{studentId}
+            </if>
+        </where>
+        ORDER BY record_id DESC
+    </select>
+
+</mapper>
