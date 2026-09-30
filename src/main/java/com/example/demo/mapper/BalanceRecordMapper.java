@@ -6,6 +6,7 @@ import org.apache.ibatis.annotations.Param;
 
 import java.util.List;
 
+/** 余额流水表 balance_record,只增不改 */
 @Mapper
 public interface BalanceRecordMapper {
 

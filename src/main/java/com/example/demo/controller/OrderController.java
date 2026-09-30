@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
+/** 订单接口:查看需要 order:read,下单、支付、取消、退课、删除需要 order:write */
 @RestController
 @RequestMapping("/api/orders")
 @RequiredArgsConstructor
@@ -60,6 +61,7 @@ public class OrderController {
         return orderService.cancelItem(id, itemId);
     }
 
+    /** 删除订单,只能删已取消的 */
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable long id) {

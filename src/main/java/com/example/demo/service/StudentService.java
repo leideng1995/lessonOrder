@@ -8,7 +8,10 @@ import com.example.demo.model.RechargeRecord;
 import com.example.demo.model.Student;
 import com.example.demo.security.PasswordHasher;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,9 +20,15 @@ import org.springframework.web.server.ResponseStatusException;
 import java.math.BigDecimal;
 import java.util.List;
 
+/**
+ * 学生:增删改查和充值。学生密码只存哈希,返回给前端前清空。
+ * 余额只能通过开户初始余额、充值、支付、退款变动,每次变动都记余额流水(BalanceService)。
+ */
 @Service
 @RequiredArgsConstructor
 public class StudentService {
+
+    private static final Logger log = LoggerFactory.getLogger(StudentService.class);
 
     @Autowired
     public StudentMapper studentMapper;
@@ -36,6 +45,7 @@ public class StudentService {
     /** 单次充值上限,防止误输入 */
     private static final BigDecimal MAX_RECHARGE = new BigDecimal("100000");
 
+    /** 新增学生:密码至少 6 位(存哈希);可带初始余额,记一条"初始余额"流水 */
     @Transactional
     public Student create(Student student) {
         if (student.getPassword() == null || student.getPassword().length() < 6) {
@@ -50,9 +60,12 @@ public class StudentService {
         if (balance != null && balance.signum() > 0) {
             balanceService.record(student.getStudentId(), null, balance, BalanceRecord.Type.INITIAL, "新建学生时的初始余额");
         }
+        log.info("新增学生:#{} {}{},初始余额 ¥{}", student.getStudentId(), nz(student.getLastName()), nz(student.getFirstName()),
+                balance == null ? BigDecimal.ZERO : balance);
         return get(student.getStudentId());
     }
 
+    /** 查询单个学生(不含密码) */
     public Student get(long id) {
         Student s = studentMapper.findById(id);
         if (s == null) {
@@ -62,12 +75,14 @@ public class StudentService {
         return s;
     }
 
+    /** 全部学生(不含密码) */
     public List<Student> list() {
         List<Student> list = studentMapper.findAll();
         list.forEach(s -> s.setPassword(null));
         return list;
     }
 
+    /** 修改学生资料;余额和积分不在这里改(mapper 不更新这两列) */
     public Student update(long id, Student student) {
         student.setStudentId(id);
         // 密码留空表示不修改(mapper 里跳过);填了则校验并存哈希
@@ -80,6 +95,8 @@ public class StudentService {
         if (studentMapper.update(student) == 0) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "学生不存在: " + id);
         }
+        boolean pwChanged = student.getPassword() != null && !student.getPassword().isEmpty();
+        log.info("修改学生:#{}{}", id, pwChanged ? ",同时修改了密码" : "");
         return get(id);
     }
 
@@ -110,6 +127,7 @@ public class StudentService {
         record.setBalanceAfter(s.getBalance());
         record.setBonusPoints(bonus);
         rechargeRecordMapper.insert(record);
+        log.info("充值:学生 #{},¥{},赠送 {} 积分,充值后余额 ¥{}", id, amount, bonus, s.getBalance());
         return s;
     }
 
@@ -118,9 +136,24 @@ public class StudentService {
         return rechargeRecordMapper.findAll(studentId);
     }
 
+    /**
+     * 删除学生,充值记录、余额流水、积分流水随之删除(外键级联)。
+     * 报过课的学生被订单明细的外键(fk_item_student)拦住,转成 409 提示,不把 SQL 错误抛给前端。
+     */
     public void delete(long id) {
-        if (studentMapper.deleteById(id) == 0) {
+        int n;
+        try {
+            n = studentMapper.deleteById(id);
+        } catch (DataIntegrityViolationException e) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "该学生已有订单,不能删除");
+        }
+        if (n == 0) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "学生不存在: " + id);
         }
+        log.info("删除学生:#{}", id);
+    }
+
+    private static String nz(String s) {
+        return s == null ? "" : s;
     }
 }

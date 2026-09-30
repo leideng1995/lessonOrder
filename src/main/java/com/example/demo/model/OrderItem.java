@@ -37,6 +37,7 @@ public class OrderItem {
 
     private Order.PaymentStatus paymentStatus;
 
+    /** 有效 / 已取消(退课、停课、订单取消) */
     public enum ItemStatus {
         ACTIVE, CANCELLED
     }

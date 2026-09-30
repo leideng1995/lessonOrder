@@ -6,6 +6,7 @@ import org.apache.ibatis.annotations.Param;
 
 import java.util.List;
 
+/** 积分流水表 points_record,只增不改 */
 @Mapper
 public interface PointsRecordMapper {
 

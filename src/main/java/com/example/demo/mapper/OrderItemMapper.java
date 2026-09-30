@@ -6,6 +6,10 @@ import org.apache.ibatis.annotations.Param;
 
 import java.util.List;
 
+/**
+ * 订单明细表 order_item:一条 = 一个学生报的一节课。
+ * 同一学生同一课次只能有一条有效明细(唯一约束兜底,防止重复报名)。
+ */
 @Mapper
 public interface OrderItemMapper {
 

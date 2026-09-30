@@ -7,6 +7,9 @@ import com.example.demo.security.Role.Perm;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
@@ -24,6 +27,8 @@ import java.nio.charset.StandardCharsets;
  */
 @Component
 public class AuthInterceptor implements HandlerInterceptor {
+
+    private static final Logger log = LoggerFactory.getLogger(AuthInterceptor.class);
 
     @Autowired
     public SysUserMapper userMapper;
@@ -52,9 +57,14 @@ public class AuthInterceptor implements HandlerInterceptor {
             if (session != null) {
                 session.invalidate();
             }
+            if (user != null) {
+                // 账号在登录期间被管理员停用:会话作废,强制下线
+                log.info("账号 {} 已停用,会话作废", user.getUsername());
+            }
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, user == null ? "请先登录" : "该账号已停用");
         }
         req.setAttribute(AuthService.CURRENT_USER, user);
+        MDC.put(RequestLogFilter.MDC_USER, user.getUsername()); // 本请求之后的日志都带上用户名
 
         if (path.startsWith("/api/auth/")) {
             return true; // 查看自己、改密码、退出:登录即可
@@ -72,6 +82,7 @@ public class AuthInterceptor implements HandlerInterceptor {
             l.setStatus(403);
             l.setError(need == null ? "未开放的接口" : "角色「" + user.getRole().label() + "」没有「" + need.code() + "」权限");
             opLog.save(l);
+            log.warn("越权访问 {} {}:{}", method, path, l.getError());
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "没有权限执行此操作");
         }
         return true;

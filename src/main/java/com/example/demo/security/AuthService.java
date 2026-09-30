@@ -5,6 +5,9 @@ import com.example.demo.model.OperationLog;
 import com.example.demo.model.SysUser;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -16,8 +19,14 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
+/**
+ * 登录、退出、修改密码和登录失败锁定。
+ * 登录类事件同时写两处:操作日志表(管理员在页面上查看)和应用日志(运维排查);两处都不记录密码。
+ */
 @Service
 public class AuthService {
+
+    private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 
     /** session 里存登录用户 ID 的键 */
     public static final String SESSION_UID = "uid";
@@ -49,6 +58,10 @@ public class AuthService {
         }
     }
 
+    /**
+     * 登录:校验用户名密码,成功后换新会话并记录登录时间。
+     * 失败计数按用户名(不区分大小写)统计,连续失败 MAX_FAILS 次锁定 LOCK_MILLIS。
+     */
     public Me login(String username, String password, HttpServletRequest request) {
         String key = username == null ? "" : username.trim().toLowerCase();
         if (key.isEmpty() || password == null || password.isEmpty()) {
@@ -89,6 +102,9 @@ public class AuthService {
         request.getSession(true).setAttribute(SESSION_UID, u.getUserId());
         userMapper.touchLogin(u.getUserId());
         loginLog(request, u, key, "登录", null);
+        MDC.put(RequestLogFilter.MDC_USER, u.getUsername());
+        log.info("登录成功:{}({},{}),IP {}{}", u.getUsername(), u.getDisplayName(), u.getRole().label(),
+                OpLogService.ipOf(request), u.isMustChangePassword() ? ",需先修改初始密码" : "");
         return Me.of(u);
     }
 
@@ -112,6 +128,7 @@ public class AuthService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "该功能未开启");
         }
         loginLog(request, null, "admin", "重置管理员密码", null); // 登录页公开入口,记下来源 IP
+        log.warn("通过登录页公开入口重置了管理员 admin 的密码,来源 IP {}", OpLogService.ipOf(request));
         SysUser u = userMapper.findByUsername("admin");
         if (u == null) {
             u = new SysUser();
@@ -122,6 +139,7 @@ public class AuthService {
             u.setMustChangePassword(true);
             u.setPasswordHash(PasswordHasher.hash(ADMIN_RESET_PASSWORD));
             userMapper.insert(u);
+            log.warn("admin 账号不存在,已重新创建");
         } else {
             userMapper.updatePassword(u.getUserId(), PasswordHasher.hash(ADMIN_RESET_PASSWORD), true);
             if (!u.isEnabled()) {
@@ -143,15 +161,21 @@ public class AuthService {
         l.setStatus(error == null ? 200 : null);
         l.setError(error);
         opLog.save(l);
+        if (error != null) {
+            log.warn("登录失败:用户名 {},IP {},原因 {}", username, OpLogService.ipOf(request), error);
+        }
     }
 
+    /** 退出登录:作废服务端会话(Cookie 随之失效) */
     public void logout(HttpServletRequest request) {
         HttpSession s = request.getSession(false);
         if (s != null) {
             s.invalidate();
+            log.info("退出登录");
         }
     }
 
+    /** 当前登录用户的信息、权限和菜单 */
     public Me me(SysUser current) {
         return Me.of(current);
     }
@@ -159,6 +183,7 @@ public class AuthService {
     /** 修改自己的密码:要验证旧密码 */
     public Me changePassword(SysUser current, String oldPassword, String newPassword) {
         if (!PasswordHasher.matches(oldPassword, current.getPasswordHash())) {
+            log.warn("修改密码失败:原密码不正确");
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "原密码不正确");
         }
         checkPolicy(newPassword);
@@ -166,6 +191,7 @@ public class AuthService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "新密码不能与原密码相同");
         }
         userMapper.updatePassword(current.getUserId(), PasswordHasher.hash(newPassword), false);
+        log.info("修改密码成功{}", current.isMustChangePassword() ? "(首次登录修改初始密码)" : "");
         return Me.of(userMapper.findById(current.getUserId()));
     }
 

@@ -49,6 +49,7 @@ public class OpLogService {
     @Autowired
     public OperationLogMapper mapper;
 
+    /** 请求 → 操作名称(如"支付订单");表里没有的写成"方法 路径" */
     public static String actionOf(String method, String path) {
         for (Object[] a : ACTIONS) {
             if (a[0].equals(method) && path.matches(((String) a[1]).replace("{n}", "\\d+"))) {
@@ -63,6 +64,7 @@ public class OpLogService {
         return path.startsWith("/api/auth/") ? Category.LOGIN : Category.OPERATION;
     }
 
+    /** 请求内容打码(密码字段换成 ***)并截断到 1000 字,用于写进日志 */
     public static String mask(String body) {
         if (body == null || body.isBlank()) {
             return null;
@@ -98,6 +100,7 @@ public class OpLogService {
         return l;
     }
 
+    /** 保存一条日志;失败只打警告,不抛异常 */
     public void save(OperationLog l) {
         try {
             if (l.getError() != null && l.getError().length() > 500) {
@@ -106,6 +109,7 @@ public class OpLogService {
             mapper.insert(l);
         } catch (RuntimeException e) {
             log.warn("写操作日志失败: {} {}", l.getAction(), e.getMessage());
+            log.debug("写操作日志失败的堆栈", e);
         }
     }
 
@@ -121,6 +125,7 @@ public class OpLogService {
         save(l);
     }
 
+    /** 最近的日志,category 为空时查询全部;limit 限制在 1~5000 */
     public List<OperationLog> recent(Category category, int limit) {
         return mapper.findRecent(category, Math.max(1, Math.min(limit, 5000)));
     }
