@@ -1,0 +1,4 @@
+INSERT INTO `points_record` (`record_id`, `student_id`, `order_id`, `change_points`, `balance_after`, `type`, `remark`, `created_at`) VALUES (1, 3, 14, 5280, 5280, 'EARN', '订单 #14 余额实付 ¥2640.00', '2026-09-30 10:39:24');
+INSERT INTO `points_record` (`record_id`, `student_id`, `order_id`, `change_points`, `balance_after`, `type`, `remark`, `created_at`) VALUES (2, 55, NULL, 1000, 1000, 'RECHARGE', '充值 ¥1000 赠送', '2026-09-30 10:50:09');
+INSERT INTO `points_record` (`record_id`, `student_id`, `order_id`, `change_points`, `balance_after`, `type`, `remark`, `created_at`) VALUES (3, 3, 15, 240, 5520, 'EARN', '订单 #15 余额实付 ¥120.00', '2026-09-30 10:50:54');
+INSERT INTO `points_record` (`record_id`, `student_id`, `order_id`, `change_points`, `balance_after`, `type`, `remark`, `created_at`) VALUES (4, 55, 16, 220, 1220, 'EARN', '订单 #16 余额实付 ¥110.00', '2026-09-30 10:51:30');
