@@ -1,0 +1,11 @@
+It has these sections:
+- **功能概览:** what each of the 9 modules does.
+- **技术栈:** Java 17, Spring Boot 4.1, MyBatis 4.1, MySQL 8, and the plain HTML/CSS/JS front end.
+- **快速开始:** requirements, database setup, config, how to start, where to find the admin's first password, and the demo-data script.
+- **角色与权限:** a table of menus and permissions for 管理员 / 前台 / 教务.
+- **业务规则:** session scheduling, time-clash checks, the points rules (100 积分 = ¥1, 2× on payment, 1× on recharge), refund splitting and the 30-minute payment deadline.
+- **配置项:** the port, session timeout, payment deadline, and the admin-reset switch.
+- **安全说明:** password hashing, session cookies, lockout after failed logins, the operation log, and how double charges and refunds are prevented.
+- **接口概览:** a table of all the API endpoints.
+- **项目结构:** the directory layout, plus how to add a new list page with `initListPage`.
+- **已知限制与后续计划.**
