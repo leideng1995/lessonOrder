@@ -6,6 +6,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
+/** 课程:标题、单价、名额、日期范围和每日节次,保存时展开成课次 */
 @Data
 public class Lesson {
     private long lessonId;
@@ -17,6 +18,7 @@ public class Lesson {
     /** 单节课价格(元) */
     private double price;
 
+    /** 分类,如 数学、英语,用于筛选 */
     private String category;
 
     /** 开课、结课日期(含) */

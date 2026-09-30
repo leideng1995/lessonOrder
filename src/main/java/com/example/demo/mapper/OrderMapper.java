@@ -8,11 +8,13 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
+/** 订单表 orders;状态变化一律走 transition(条件更新),不直接改状态 */
 @Mapper
 public interface OrderMapper {
 
     int insert(Order order);
 
+    /** 删除订单,明细级联删除;调用前需确认订单已取消 */
     int deleteById(@Param("id") long id);
 
     /**
@@ -43,10 +45,12 @@ public interface OrderMapper {
     /** studentId 为 null 时查询全部 */
     List<Order> findAll(@Param("studentId") Long studentId);
 
+    /** 课程的订单数(含已取消),> 0 时课程不能删除 */
     int countByLesson(@Param("lessonId") long lessonId);
 
     /** 下单时间不晚于 before、仍待支付的订单 ID */
     List<Long> findPendingCreatedBefore(@Param("before") LocalDateTime before);
 
+    /** 记录取消原因(如超时未支付) */
     int updateCancelReason(@Param("id") long id, @Param("reason") String reason);
 }

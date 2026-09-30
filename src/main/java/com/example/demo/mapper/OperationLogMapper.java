@@ -6,6 +6,7 @@ import org.apache.ibatis.annotations.Param;
 
 import java.util.List;
 
+/** 操作日志表 operation_log,只增不改 */
 @Mapper
 public interface OperationLogMapper {
 

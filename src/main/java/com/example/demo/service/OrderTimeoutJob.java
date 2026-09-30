@@ -1,11 +1,15 @@
 package com.example.demo.service;
 
 import com.example.demo.security.OpLogService;
+import com.example.demo.security.RequestLogFilter;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+
+import java.util.List;
 
 /**
  * 未支付订单超时自动取消:每分钟检查一次,下单超过支付时限(app.orders.pay-timeout-minutes)仍未支付的订单
@@ -23,8 +27,21 @@ public class OrderTimeoutJob {
 
     @Scheduled(fixedDelayString = "${app.orders.timeout-check-ms:60000}", initialDelayString = "${app.orders.timeout-check-ms:60000}")
     public void cancelExpiredOrders() {
+        MDC.put(RequestLogFilter.MDC_USER, "system"); // 定时任务线程没有请求上下文,日志里标成 system
+        try {
+            run();
+        } finally {
+            MDC.clear();
+        }
+    }
+
+    private void run() {
         int n = 0;
-        for (long id : orderService.expiredPendingIds()) {
+        List<Long> ids = orderService.expiredPendingIds();
+        if (!ids.isEmpty()) {
+            log.debug("发现 {} 个超时未支付的订单:{}", ids.size(), ids);
+        }
+        for (long id : ids) {
             try {
                 if (orderService.cancelExpired(id)) {
                     n++;
@@ -32,6 +49,7 @@ public class OrderTimeoutJob {
                 }
             } catch (RuntimeException e) {
                 log.warn("超时订单 #{} 自动取消失败,下一轮重试: {}", id, e.getMessage());
+                log.debug("超时订单 #{} 自动取消失败的堆栈", id, e);
             }
         }
         if (n > 0) {

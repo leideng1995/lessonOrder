@@ -11,6 +11,7 @@ public class LessonSession {
 
     private long lessonId;
 
+    /** 来自哪个节次;修改课程重建节次期间可能为空 */
     private Long periodId;
 
     private LocalDateTime startAt;
@@ -19,6 +20,7 @@ public class LessonSession {
 
     private int capacity;
 
+    /** 剩余名额 = 名额 - 有效报名数,下单扣、退课还 */
     private int availableSeats;
 
     private SessionStatus status;
@@ -29,6 +31,7 @@ public class LessonSession {
     /** 查询时统计:所有报名记录数(含已取消),> 0 时课次不能物理删除 */
     private int itemCount;
 
+    /** 正常排课 / 已停课 */
     public enum SessionStatus {
         SCHEDULED, CANCELLED
     }

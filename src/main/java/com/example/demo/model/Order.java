@@ -6,6 +6,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
+/** 订单:一个学生报一门课的若干节;金额、支付构成和退款构成都记在订单上,便于对账 */
 @Data
 public class Order {
     private long orderId;
@@ -31,8 +32,10 @@ public class Order {
 
     /* ---------- 退款构成:refundedAmount = refundedBalance + refundedPoints / 100 ---------- */
 
+    /** 已退回的余额 */
     private BigDecimal refundedBalance;
 
+    /** 已退回的积分 */
     private int refundedPoints;
 
     /** 因退课应扣回的已得积分(学生积分不够时实际扣的会少一些,见积分流水) */
@@ -59,10 +62,12 @@ public class Order {
     /** 订单明细,只在查询单个订单时返回 */
     private List<OrderItem> items;
 
+    /** 订单状态:待支付(PENDING)→ 已确认(CONFIRMED,已支付);任何时候全部课次取消后 → 已取消(CANCELLED) */
     public enum OrderStatus {
         PENDING, CONFIRMED, CANCELLED
     }
 
+    /** 支付状态:未支付 → 已支付 → 已退款(已支付订单的课次全部退掉后) */
     public enum PaymentStatus {
         UNPAID, PAID, REFUNDED
     }

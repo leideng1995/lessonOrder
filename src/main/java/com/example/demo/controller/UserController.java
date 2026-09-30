@@ -29,6 +29,7 @@ public class UserController {
     public record ResetPasswordRequest(String password) {
     }
 
+    /** 全部系统用户(不含密码哈希) */
     @GetMapping
     public List<SysUser> list() {
         return userService.list();
@@ -42,18 +43,21 @@ public class UserController {
                 .toList();
     }
 
+    /** 新增用户,管理员设置初始密码,用户首次登录必须修改 */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public SysUser create(@RequestBody CreateUserRequest req) {
         return userService.create(req.username(), req.displayName(), req.role(), req.password());
     }
 
+    /** 修改姓名、角色、启用状态;不能改自己的角色或停用自己 */
     @PutMapping("/{id}")
     public SysUser update(@RequestAttribute(AuthService.CURRENT_USER) SysUser current,
                           @PathVariable long id, @RequestBody UpdateUserRequest req) {
         return userService.update(current, id, req.displayName(), req.role(), req.enabled());
     }
 
+    /** 重置用户密码为管理员指定的临时密码,用户下次登录必须修改 */
     @PutMapping("/{id}/password")
     public SysUser resetPassword(@PathVariable long id, @RequestBody ResetPasswordRequest req) {
         return userService.resetPassword(id, req.password());

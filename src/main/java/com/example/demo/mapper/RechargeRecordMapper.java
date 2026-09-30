@@ -6,6 +6,7 @@ import org.apache.ibatis.annotations.Param;
 
 import java.util.List;
 
+/** 充值记录表 recharge_record,只增不改 */
 @Mapper
 public interface RechargeRecordMapper {
 

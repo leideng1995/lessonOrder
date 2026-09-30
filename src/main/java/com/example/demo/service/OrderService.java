@@ -6,6 +6,8 @@ import com.example.demo.model.LessonSession.SessionStatus;
 import com.example.demo.model.Order.OrderStatus;
 import com.example.demo.model.Order.PaymentStatus;
 import com.example.demo.model.OrderItem.ItemStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
@@ -20,8 +22,19 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 
+/**
+ * 订单:下单、支付、取消、退课、停课、超时取消、删除。涉及名额、余额、积分三者同时变动,全部在一个事务里完成。
+ * <p>
+ * 加锁顺序统一为"学生 → 订单 → 课次"(见 lock),同一学生的操作串行执行;
+ * 名额、余额、积分都用条件 UPDATE 扣减(不够时影响 0 行),不会出现超卖或扣成负数。
+ * <p>
+ * 日志:每个成功的写操作打一行 INFO,写明订单、学生、金额构成,便于和余额流水、积分流水对账;
+ * 失败原因由 RequestLogFilter 统一记录。
+ */
 @Service
 public class OrderService {
+
+    private static final Logger log = LoggerFactory.getLogger(OrderService.class);
 
     /** 一单最多选多少节课 */
     private static final int MAX_ITEMS = 200;
@@ -120,6 +133,9 @@ public class OrderService {
             // 唯一约束兜底:同一学生同一课次只能有一条有效报名
             throw new ResponseStatusException(HttpStatus.CONFLICT, "已报名过其中的课次,请刷新后重试");
         }
+        log.info("下单成功:订单 #{},学生 #{},课程 #{}「{}」,{} 节 × ¥{} = ¥{},待支付",
+                order.getOrderId(), studentId, lessonId, lesson.getTitle(), sessions.size(),
+                price.setScale(2, RoundingMode.HALF_UP), order.getTotalAmount().setScale(2, RoundingMode.HALF_UP));
         return get(order.getOrderId());
     }
 
@@ -165,6 +181,7 @@ public class OrderService {
         return itemMapper.findScheduleByStudent(studentId);
     }
 
+    /** 订单列表(不含明细),studentId 为 null 时查询全部 */
     public List<Order> list(Long studentId) {
         List<Order> list = orderMapper.findAll(studentId);
         list.forEach(this::withDeadline);
@@ -190,6 +207,7 @@ public class OrderService {
         return o;
     }
 
+    /** 是否已超过支付时限(按下单时间计算) */
     private boolean expired(Order o) {
         return o.getCreatedAt() != null && !LocalDateTime.now().isBefore(o.getCreatedAt().plusMinutes(payTimeoutMinutes));
     }
@@ -207,6 +225,7 @@ public class OrderService {
     public boolean cancelExpired(long id) {
         Order o = lock(id);
         if (o.getStatus() != OrderStatus.PENDING || o.getPaymentStatus() != PaymentStatus.UNPAID || !expired(o)) {
+            log.debug("订单 #{} 在自动取消前已被支付或取消,跳过", id);
             return false;
         }
         List<OrderItem> active = itemMapper.findByOrder(id).stream()
@@ -218,6 +237,7 @@ public class OrderService {
             cancelItems(o, active);
         }
         orderMapper.updateCancelReason(id, "超时未支付(下单后 " + payTimeoutMinutes + " 分钟),系统自动取消");
+        log.info("超时自动取消:订单 #{},学生 #{},下单于 {},归还 {} 个名额", id, o.getStudentId(), o.getCreatedAt(), active.size());
         return true;
     }
 
@@ -281,6 +301,8 @@ public class OrderService {
             pointsRecord(sid, id, earned, PointsRecord.Type.EARN, "订单 #" + id + " 余额实付 ¥" + balancePart);
         }
         orderMapper.updatePayment(id, balancePart, usePoints, earned);
+        log.info("支付成功:订单 #{},学生 #{},¥{} = 余额 ¥{} + {} 积分(¥{}),获得 {} 积分",
+                id, sid, o.getTotalAmount(), balancePart, usePoints, pointsValue, earned);
         return get(id);
     }
 
@@ -299,6 +321,7 @@ public class OrderService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "订单里的课次都已开始,不能取消");
         }
         cancelItems(o, targets);
+        log.info("取消订单:订单 #{},学生 #{},取消 {} 节未开始的课次", id, o.getStudentId(), targets.size());
         return get(id);
     }
 
@@ -317,6 +340,8 @@ public class OrderService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "这节课已开始,不能取消");
         }
         cancelItems(o, List.of(item));
+        log.info("退课:订单 #{},学生 #{},明细 #{}(课次 #{},{})", orderId, o.getStudentId(), itemId,
+                item.getSessionId(), item.getStartAt().format(FMT));
         return get(orderId);
     }
 
@@ -342,6 +367,8 @@ public class OrderService {
         for (Map.Entry<Long, List<OrderItem>> e : byOrder.entrySet()) {
             cancelItems(lock(e.getKey()), e.getValue());
         }
+        log.info("停课:课程 #{},课次 #{}({}),取消 {} 个订单的报名{}", lessonId, sessionId, s.getStartAt().format(FMT),
+                byOrder.size(), byOrder.isEmpty() ? "" : ",订单号 " + byOrder.keySet());
         return sessionMapper.findById(sessionId);
     }
 
@@ -354,6 +381,7 @@ public class OrderService {
         BigDecimal amount = BigDecimal.ZERO;
         for (OrderItem i : items) {
             if (itemMapper.cancel(i.getItemId()) == 0) {
+                log.debug("明细 #{} 已被其他请求取消,不重复退款", i.getItemId());
                 continue; // 已被其他请求取消,不重复退款
             }
             sessionMapper.increaseSeat(i.getSessionId());
@@ -374,6 +402,7 @@ public class OrderService {
             orderMapper.transition(o.getOrderId(), o.getStatus(), o.getPaymentStatus(),
                     OrderStatus.CANCELLED, paid ? PaymentStatus.REFUNDED : o.getPaymentStatus());
             o.setStatus(OrderStatus.CANCELLED);
+            log.info("订单 #{} 已没有有效课次,状态改为已取消{}", o.getOrderId(), paid ? "(已全额退款)" : "");
         }
     }
 
@@ -408,12 +437,18 @@ public class OrderService {
             pointsRecord(sid, o.getOrderId(), pointsBack, PointsRecord.Type.REFUND, "订单 #" + o.getOrderId() + " 退课退回抵扣的积分");
         }
 
+        // 扣回当初获得的积分:按本次退回的余额占剩余余额实付的比例,最后一次扣回全部剩余
         int remainEarned = o.getEarnedPoints() - o.getClawedPoints();
         int clawDue = last ? remainEarned
                 : remainBalance.signum() == 0 ? 0
                 : balanceBack.multiply(BigDecimal.valueOf(remainEarned)).divide(remainBalance, 0, RoundingMode.FLOOR).intValue();
+        int clawed = 0;
         if (clawDue > 0) {
             int actual = Math.min(clawDue, studentMapper.findById(sid).getPoints());
+            clawed = actual;
+            if (actual < clawDue) {
+                log.warn("订单 #{} 退课应扣回 {} 积分,学生 #{} 积分不足,只扣 {}", o.getOrderId(), clawDue, sid, actual);
+            }
             if (actual > 0) {
                 studentMapper.deductPoints(sid, actual);
                 pointsRecord(sid, o.getOrderId(), -actual, PointsRecord.Type.CLAWBACK, "订单 #" + o.getOrderId() + " 退课扣回已得积分"
@@ -425,8 +460,11 @@ public class OrderService {
         o.setRefundedPoints(o.getRefundedPoints() + pointsBack);
         o.setRefundedBalance(o.getRefundedBalance().add(balanceBack));
         o.setRefundedAmount(o.getRefundedAmount().add(amount));
+        log.info("退款:订单 #{},学生 #{},¥{} = 退余额 ¥{} + 退 {} 积分,扣回已得积分 {}{}", o.getOrderId(), sid, amount,
+                balanceBack, pointsBack, clawed, last ? "(最后一次退款,剩余全部退回)" : "");
     }
 
+    /** 记积分流水(调用方已改过学生积分) */
     private void pointsRecord(long studentId, Long orderId, int change, PointsRecord.Type type, String remark) {
         pointsService.record(studentId, orderId, change, type, remark);
     }
@@ -462,5 +500,6 @@ public class OrderService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "只能删除已取消的订单");
         }
         orderMapper.deleteById(id);
+        log.info("删除订单:订单 #{},学生 #{}", id, o.getStudentId());
     }
 }

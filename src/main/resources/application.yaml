@@ -29,7 +29,11 @@ mybatis:
   configuration:
     map-underscore-to-camel-case: true   # student_id -> studentId
   mapper-locations: classpath:mapper/*.xml
+# 日志输出位置和格式见 logback-spring.xml;这里只调级别
 logging:
   level:
-    com.example.demo.mapper: debug
+    com.example.demo: info                          # 业务操作、登录、访问汇总
+    com.example.demo.mapper: debug                  # 打印执行的 SQL 和参数(只到控制台,app.log 只收 INFO 以上);上线可改为 info
+    # com.example.demo.security.RequestLogFilter: debug   # 打开后查询请求(GET)也记访问日志
+    # com.example.demo.service: debug                     # 打开后记每一条余额 / 积分流水
 

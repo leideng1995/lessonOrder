@@ -3,6 +3,8 @@ package com.example.demo.service;
 import com.example.demo.mapper.PointsRecordMapper;
 import com.example.demo.mapper.StudentMapper;
 import com.example.demo.model.PointsRecord;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -13,6 +15,8 @@ import java.util.List;
 /** 积分规则和积分流水。积分余额的增减由调用方在各自的事务里完成,这里负责记流水 */
 @Service
 public class PointsService {
+
+    private static final Logger log = LoggerFactory.getLogger(PointsService.class);
 
     /** 100 积分 = 1 元,即 1 积分 = 1 分钱,积分和金额之间换算没有舍入 */
     public static final int POINTS_PER_YUAN = 100;
@@ -44,6 +48,7 @@ public class PointsService {
         r.setType(type);
         r.setRemark(remark);
         recordMapper.insert(r);
+        log.debug("积分流水:学生 #{},{} {},变动后 {},{}", studentId, type, change, r.getBalanceAfter(), remark);
     }
 
     /** 积分流水,studentId 为 null 时查询全部 */

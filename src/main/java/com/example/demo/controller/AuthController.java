@@ -9,6 +9,9 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
+/**
+ * 登录相关接口。login、options、reset-admin 不需要登录,其余只要登录即可(AuthInterceptor 放行 /api/auth/**)。
+ */
 @RestController
 @RequestMapping("/api/auth")
 @RequiredArgsConstructor
@@ -41,17 +44,20 @@ public class AuthController {
         authService.resetAdmin(request);
     }
 
+    /** 退出登录,作废会话 */
     @PostMapping("/logout")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void logout(HttpServletRequest request) {
         authService.logout(request);
     }
 
+    /** 当前登录用户、权限和菜单;前端每个页面加载时调用,401 时跳到登录页 */
     @GetMapping("/me")
     public AuthService.Me me(@RequestAttribute(AuthService.CURRENT_USER) SysUser current) {
         return authService.me(current);
     }
 
+    /** 修改自己的密码,需要原密码;首次登录修改初始密码也走这里 */
     @PutMapping("/password")
     public AuthService.Me changePassword(@RequestAttribute(AuthService.CURRENT_USER) SysUser current,
                                          @RequestBody ChangePasswordRequest req) {

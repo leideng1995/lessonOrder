@@ -8,6 +8,8 @@ import com.example.demo.model.Lesson;
 import com.example.demo.model.LessonPeriod;
 import com.example.demo.model.LessonSession;
 import com.example.demo.model.LessonSession.SessionStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -21,8 +23,14 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
 
+/**
+ * 课程和排课。课程定义"日期范围 × 每日节次",保存时展开成一个个课次(lesson_session),名额和报名都在课次上。
+ * 修改课程时按开始时间和已有课次对齐,已有报名的课次受保护(见 syncSessions)。
+ */
 @Service
 public class LessonService {
+
+    private static final Logger log = LoggerFactory.getLogger(LessonService.class);
 
     /** 一门课最长排多少天、每天最多几节,防止误操作生成海量课次 */
     private static final int MAX_DAYS = 366;
@@ -48,9 +56,12 @@ public class LessonService {
         lessonMapper.insert(lesson);
         savePeriods(lesson.getLessonId(), periods);
         syncSessions(lesson, periods);
+        log.info("新增课程:#{}「{}」,{} ~ {},每天 {} 节,每节 {} 个名额,单价 ¥{}", lesson.getLessonId(), lesson.getTitle(),
+                lesson.getStartDate(), lesson.getEndDate(), periods.size(), lesson.getCapacity(), lesson.getPrice());
         return get(lesson.getLessonId());
     }
 
+    /** 查询单个课程,带节次和课次统计 */
     public Lesson get(long id) {
         Lesson l = lessonMapper.findById(id);
         if (l == null) {
@@ -60,6 +71,7 @@ public class LessonService {
         return l;
     }
 
+    /** 课程列表,category 为空时查询全部;节次一次查出后按课程分组,避免逐个查询 */
     public List<Lesson> list(String category) {
         List<Lesson> list = lessonMapper.findAll(category);
         Map<Long, List<LessonPeriod>> byLesson = periodMapper.findAll(null).stream()
@@ -68,6 +80,7 @@ public class LessonService {
         return list;
     }
 
+    /** 课程的全部课次(含已停课),按时间排序 */
     public List<LessonSession> sessions(long lessonId) {
         get(lessonId);
         return sessionMapper.findByLesson(lessonId);
@@ -86,6 +99,8 @@ public class LessonService {
         periodMapper.deleteByLesson(id);   // 课次上的 period_id 会被置空,下面同步时重新关联
         savePeriods(id, periods);
         syncSessions(lesson, periods);
+        log.info("修改课程:#{}「{}」,{} ~ {},每天 {} 节,每节 {} 个名额,单价 ¥{}", id, lesson.getTitle(),
+                lesson.getStartDate(), lesson.getEndDate(), periods.size(), lesson.getCapacity(), lesson.getPrice());
         return get(id);
     }
 
@@ -96,6 +111,7 @@ public class LessonService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "该课程已有订单,不能删除");
         }
         lessonMapper.deleteById(id);
+        log.info("删除课程:#{}", id);
     }
 
     /* ---------- 内部 ---------- */
@@ -152,6 +168,7 @@ public class LessonService {
         return periods;
     }
 
+    /** 保存节次,回填 periodId 供生成课次时关联 */
     private void savePeriods(long lessonId, List<LessonPeriod> periods) {
         for (LessonPeriod p : periods) {
             p.setLessonId(lessonId);
@@ -179,6 +196,7 @@ public class LessonService {
         }
 
         List<String> conflicts = new ArrayList<>();
+        int updated = 0, deleted = 0, cancelled = 0;
         for (LessonSession s : sessionMapper.findByLesson(lesson.getLessonId())) {
             Slot slot = wanted.remove(s.getStartAt());
             int booked = s.getBookedCount();
@@ -187,8 +205,10 @@ public class LessonService {
                     conflicts.add(s.getStartAt().format(FMT) + " 已有 " + booked + " 人报名,不能移除");
                 } else if (s.getItemCount() > 0) {
                     sessionMapper.updateStatus(s.getSessionId(), SessionStatus.CANCELLED);
+                    cancelled++;
                 } else {
                     sessionMapper.deleteById(s.getSessionId());
+                    deleted++;
                 }
                 continue;
             }
@@ -205,6 +225,7 @@ public class LessonService {
             s.setCapacity(lesson.getCapacity());
             s.setAvailableSeats(lesson.getCapacity() - booked);
             sessionMapper.update(s);
+            updated++;
         }
         if (!conflicts.isEmpty()) {
             String more = conflicts.size() > 3 ? " 等 " + conflicts.size() + " 节" : "";
@@ -223,8 +244,11 @@ public class LessonService {
             s.setStatus(SessionStatus.SCHEDULED);
             sessionMapper.insert(s);
         }
+        log.info("课程 #{} 课次同步:新增 {},保留并更新 {},删除 {},改为停课 {}",
+                lesson.getLessonId(), wanted.size(), updated, deleted, cancelled);
     }
 
+    /** 参数校验失败 → 400 */
     private static ResponseStatusException bad(String msg) {
         return new ResponseStatusException(HttpStatus.BAD_REQUEST, msg);
     }

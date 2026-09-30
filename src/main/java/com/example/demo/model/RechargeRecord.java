@@ -5,6 +5,7 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+/** 充值记录:每次充值一条(余额变动的完整记录见余额流水 BalanceRecord) */
 @Data
 public class RechargeRecord {
     private long recordId;

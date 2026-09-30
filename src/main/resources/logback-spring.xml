@@ -1,44 +1,66 @@
 <?xml version="1.0" encoding="UTF-8"?>
-
+<!--
+  日志配置
+  - 控制台:全部级别(按各 logger 的级别过滤),开发时看
+  - logs/app.log:INFO 及以上,业务操作、登录、访问汇总都在这里;按天、按 20MB 滚动,保留 30 天,总量不超过 1GB
+  - logs/error.log:只有 ERROR,出了问题先看这个;保留 90 天
+  每行都带 [请求号] [用户名]:同一个请求的日志请求号相同,响应头 X-Request-Id 也是这个值;
+  定时任务的用户名是 system,非请求线程(启动、定时任务)的请求号为 "-"。
+  各包的级别在 application.yaml 的 logging.level 里调。
+-->
 <configuration>
 
-    <appender name="CONSOLE"
-              class="ch.qos.logback.core.ConsoleAppender">
+    <property name="LOG_DIR" value="logs"/>
+    <property name="PATTERN"
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{reqId:--}] [%X{user:--}] [%thread] %logger{36} - %msg%n"/>
 
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>
-                %d{yyyy-MM-dd HH:mm:ss} %-5level [%thread] %logger{36} - %msg%n
-            </pattern>
+            <pattern>${PATTERN}</pattern>
+            <charset>UTF-8</charset>
         </encoder>
-
     </appender>
 
-    <appender name="ERROR"
-              class="ch.qos.logback.core.FileAppender">
+    <appender name="APP_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/app.log</file>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>INFO</level>
+        </filter>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/app.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>20MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>${PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
 
-        <file>logs/error.log</file>
-
-
+    <appender name="ERROR_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/error.log</file>
         <filter class="ch.qos.logback.classic.filter.LevelFilter">
             <level>ERROR</level>
             <onMatch>ACCEPT</onMatch>
             <onMismatch>DENY</onMismatch>
         </filter>
-
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/error.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>20MB</maxFileSize>
+            <maxHistory>90</maxHistory>
+            <totalSizeCap>500MB</totalSizeCap>
+        </rollingPolicy>
         <encoder>
-            <pattern>
-                %d{yyyy-MM-dd HH:mm:ss} %-5level [%thread] %logger{36} - %msg%n
-            </pattern>
+            <pattern>${PATTERN}</pattern>
+            <charset>UTF-8</charset>
         </encoder>
-
     </appender>
-
-    <root level="ERROR">
-        <appender-ref ref="ERROR"/>
-    </root>
 
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="APP_FILE"/>
+        <appender-ref ref="ERROR_FILE"/>
     </root>
 
 </configuration>

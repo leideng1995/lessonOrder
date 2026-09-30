@@ -7,11 +7,13 @@ import org.apache.ibatis.annotations.Param;
 import java.util.Collection;
 import java.util.List;
 
+/** 课次表 lesson_session:名额和停课状态在这一层 */
 @Mapper
 public interface LessonSessionMapper {
 
     int insert(LessonSession session);
 
+    /** 物理删除课次,只用于从没人报过名的课次 */
     int deleteById(@Param("id") long id);
 
     /** 更新时间、节次、名额、剩余名额、状态 */
@@ -32,5 +34,6 @@ public interface LessonSessionMapper {
     /** 归还一个名额,不会超过总名额 */
     int increaseSeat(@Param("id") long id);
 
+    /** 改课次状态(停课) */
     int updateStatus(@Param("id") long id, @Param("status") LessonSession.SessionStatus status);
 }

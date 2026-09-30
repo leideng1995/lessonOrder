@@ -7,6 +7,10 @@ import org.apache.ibatis.annotations.Param;
 import java.math.BigDecimal;
 import java.util.List;
 
+/**
+ * 学生表 student。余额、积分只能通过 add / deduct 系列方法改,且都是条件更新:
+ * 扣减时带上"够扣"的条件,返回 0 表示不够,不会扣成负数。
+ */
 @Mapper
 public interface StudentMapper {
 

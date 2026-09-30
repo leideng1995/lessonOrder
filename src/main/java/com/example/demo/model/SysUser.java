@@ -21,6 +21,7 @@ public class SysUser {
 
     private boolean enabled;
 
+    /** 为 true 时登录后必须先修改密码才能使用其他功能(新建账号、管理员重置密码后) */
     private boolean mustChangePassword;
 
     private LocalDateTime createdAt;
